@@ -29,8 +29,11 @@ All daily, weekly, and monthly realized-P&L aggregations use `America/New_York` 
 - Monthly: events from the first calendar day of the ET month through the as-of timestamp
 
 `trader-memory-core` widens bare producer dates to UTC midnight (for example
-`2026-07-02T00:00:00+00:00`). This artifact is counted on the named ET
-accounting date, not the prior ET evening.
+`2026-07-02T00:00:00+00:00`). This artifact — like bare `YYYY-MM-DD` strings and
+YAML-native dates — is counted on the named ET accounting date, not the prior ET
+evening. For cooldown and recency math, date-only event timestamps resolve
+conservatively to the END of the named ET day (23:59:59 ET), so a loss journaled
+without a time still blocks the next trading morning.
 
 The script accepts `--as-of` so tests and sample runs can freeze the evaluation date.
 Date-only values cover the full ET day; timestamp values are exact cutoffs.

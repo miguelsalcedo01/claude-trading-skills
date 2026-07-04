@@ -13,7 +13,7 @@ The Volatility Contraction Pattern (VCP) was developed by Mark Minervini, two-ti
 3. **Stage 3 - Distribution/Topping:** Stock stalls after an advance. Smart money distributes.
 4. **Stage 4 - Declining/Downtrend:** Stock is in a confirmed downtrend. Avoid or short.
 
-### Minervini's 7-Point Trend Template (Stage 2 Confirmation)
+### Minervini's 8-Point Trend Template (Stage 2 Confirmation)
 
 A stock MUST pass all (or nearly all) of these criteria to be in a confirmed Stage 2:
 
@@ -22,12 +22,13 @@ A stock MUST pass all (or nearly all) of these criteria to be in a confirmed Sta
 | 1 | Price > 150-day SMA AND Price > 200-day SMA | Above major trend lines |
 | 2 | 150-day SMA > 200-day SMA | Shorter MA above longer (bullish alignment) |
 | 3 | 200-day SMA trending up for 22+ trading days | Long-term trend is up |
-| 4 | Price > 50-day SMA | Above intermediate trend line |
-| 5 | Price at least 25% above 52-week low | Sufficient distance from lows |
-| 6 | Price within 25% of 52-week high | Not in a deep correction |
-| 7 | Relative Strength rating > 70 | Outperforming most stocks |
+| 4 | 50-day SMA above both the 150-day and 200-day SMAs | Bullish MA ordering |
+| 5 | Price > 50-day SMA | Above intermediate trend line |
+| 6 | Price at least 30% above 52-week low | Sufficient distance from lows |
+| 7 | Price within 25% of 52-week high | Not in a deep correction |
+| 8 | Relative Strength rating > 70 | Outperforming most stocks |
 
-**Pass threshold:** 6 of 7 criteria (score >= 85) to proceed to VCP detection.
+**Pass threshold:** 7 of 8 criteria (score >= 85) to proceed to VCP detection.
 
 ## VCP Pattern Mechanics
 

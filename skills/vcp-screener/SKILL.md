@@ -157,7 +157,7 @@ For each top candidate, present:
 ## 3-Phase Pipeline
 
 1. **Pre-Filter** - Quote-based screening (price, volume, 52w position) ~101 API calls
-2. **Trend Template** - 7-point Stage 2 filter with 260-day histories ~100 API calls
+2. **Trend Template** - 8-point Stage 2 filter with 260-day histories ~100 API calls
 3. **VCP Detection** - Pattern analysis, scoring, report generation (no additional API calls)
 
 ## Output

@@ -166,6 +166,47 @@ class TestKelly:
         assert result["mode"] == "shares"
         assert "final_recommended_shares" in result
 
+    def test_kelly_shares_risk_capped_at_max_risk_pct(self):
+        """Canonical Kelly example: half-kelly 18.5% is capped to 2% risk.
+
+        account=100k, entry=155, stop=148.50, W=0.55, R=2.5 -> half-kelly 18.5%
+        Uncapped this would be int(18500 / 6.50) = 2846 shares ($441k position).
+        Capped at the 2% default: int(2000 / 6.50) = 307 shares.
+        """
+        params = SizingParameters(
+            account_size=100_000,
+            entry_price=155.0,
+            stop_price=148.50,
+            win_rate=0.55,
+            avg_win=2.5,
+            avg_loss=1.0,
+        )
+        result = calculate_position(params)
+        assert result["final_recommended_shares"] == 307  # int(2000 / 6.50)
+        assert result["final_risk_pct"] <= 2.0
+        assert result["risk_capped"] is True
+        assert result["parameters"]["effective_risk_pct"] == 2.0
+        # Warning must be prominent and show both numbers
+        assert result["warnings"], "expected a risk-cap warning"
+        assert "18.5" in result["warnings"][0]
+        assert "2.0" in result["warnings"][0]
+
+    def test_kelly_shares_no_stop_capped_with_assumption(self):
+        """Kelly no-stop: same cap applies and 100%-loss assumption is explicit."""
+        params = SizingParameters(
+            account_size=100_000,
+            entry_price=155.0,
+            win_rate=0.55,
+            avg_win=2.5,
+            avg_loss=1.0,
+        )
+        result = calculate_position(params)
+        # Capped budget $2,000 spent as position value: int(2000 / 155) = 12
+        assert result["final_recommended_shares"] == 12
+        assert result["risk_capped"] is True
+        assert result["warnings"]
+        assert "100% loss" in result["assumptions"]
+
     def test_kelly_shares_no_stop_risk_note(self):
         """Kelly with --entry but no --stop -> risk_dollars=None, risk_note present."""
         params = SizingParameters(
@@ -241,6 +282,37 @@ class TestConstraints:
         # Position limit: 64, sector limit: 51 -> min = 51
         assert result["final_recommended_shares"] == 51
 
+    def test_buying_power_caps_tight_stop(self):
+        """Tight stop cannot buy more shares than the account affords.
+
+        entry=100, stop=99.50, account=100k, risk=1% -> risk math says 2000
+        shares ($200k position), but a cash account can only buy 1000.
+        """
+        params = SizingParameters(
+            account_size=100_000,
+            entry_price=100.0,
+            stop_price=99.50,
+            risk_pct=1.0,
+        )
+        result = calculate_position(params)
+        assert result["final_recommended_shares"] == 1000  # not 2000
+        assert result["binding_constraint"] == "buying_power"
+        assert result["final_position_value"] == 100_000.0
+
+    def test_buying_power_margin_multiple_override(self):
+        """--margin-multiple 2.0 lifts the buying power cap for margin accounts."""
+        params = SizingParameters(
+            account_size=100_000,
+            entry_price=100.0,
+            stop_price=99.50,
+            risk_pct=1.0,
+            margin_multiple=2.0,
+        )
+        result = calculate_position(params)
+        # 2x margin allows the full 2000 risk-based shares
+        assert result["final_recommended_shares"] == 2000
+        assert result["binding_constraint"] is None
+
     def test_binding_constraint_identification(self):
         """Verify binding_constraint field shows the tightest constraint."""
         params = SizingParameters(
@@ -269,6 +341,28 @@ class TestValidation:
             risk_pct=1.0,
         )
         with pytest.raises(ValueError, match="stop_price must be below entry_price"):
+            validate_parameters(params)
+
+    def test_stop_zero_error(self):
+        """stop=0 -> ValueError."""
+        params = SizingParameters(
+            account_size=100_000,
+            entry_price=155.0,
+            stop_price=0.0,
+            risk_pct=1.0,
+        )
+        with pytest.raises(ValueError, match="stop_price must be positive"):
+            validate_parameters(params)
+
+    def test_stop_negative_error(self):
+        """stop=-5 -> ValueError."""
+        params = SizingParameters(
+            account_size=100_000,
+            entry_price=155.0,
+            stop_price=-5.0,
+            risk_pct=1.0,
+        )
+        with pytest.raises(ValueError, match="stop_price must be positive"):
             validate_parameters(params)
 
     def test_zero_risk_error(self):

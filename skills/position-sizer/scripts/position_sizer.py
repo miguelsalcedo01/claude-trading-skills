@@ -30,6 +30,8 @@ class SizingParameters:
     max_sector_pct: float | None = None
     sector: str | None = None
     current_sector_exposure: float = 0.0
+    max_risk_pct: float = 2.0
+    margin_multiple: float = 1.0
 
 
 def validate_parameters(params: SizingParameters) -> None:
@@ -38,6 +40,8 @@ def validate_parameters(params: SizingParameters) -> None:
         raise ValueError("account_size must be positive")
     if params.entry_price is not None and params.entry_price <= 0:
         raise ValueError("entry_price must be positive")
+    if params.stop_price is not None and params.stop_price <= 0:
+        raise ValueError("stop_price must be positive")
     if params.stop_price is not None and params.entry_price is not None:
         if params.stop_price >= params.entry_price:
             raise ValueError("stop_price must be below entry_price for long trades")
@@ -52,6 +56,10 @@ def validate_parameters(params: SizingParameters) -> None:
         raise ValueError("avg_win must be positive")
     if params.avg_loss is not None and params.avg_loss <= 0:
         raise ValueError("avg_loss must be positive")
+    if params.max_risk_pct <= 0:
+        raise ValueError("max_risk_pct must be positive")
+    if params.margin_multiple <= 0:
+        raise ValueError("margin_multiple must be positive")
 
 
 def calculate_fixed_fractional(params: SizingParameters) -> dict:
@@ -120,12 +128,29 @@ def calculate_kelly(params: SizingParameters) -> dict:
 def apply_constraints(shares: int, params: SizingParameters) -> tuple[int, list[dict], str | None]:
     """Apply portfolio constraints and return (final_shares, constraints, binding).
 
-    Evaluates max position % and max sector % constraints, then returns
-    the minimum of all candidate share counts (strictest constraint wins).
+    Evaluates buying power, max position %, and max sector % constraints,
+    then returns the minimum of all candidate share counts (strictest
+    constraint wins). Buying power is always applied: the account cannot
+    buy more than account_size * margin_multiple worth of stock
+    (margin_multiple defaults to 1.0 for cash accounts).
     """
     constraints: list[dict] = []
     candidates = [shares]
     binding: str | None = None
+
+    if params.entry_price:
+        max_by_buying_power = int(
+            params.account_size * params.margin_multiple / params.entry_price
+        )
+        constraints.append(
+            {
+                "type": "buying_power",
+                "limit": params.margin_multiple,
+                "max_shares": max_by_buying_power,
+                "binding": False,
+            }
+        )
+        candidates.append(max_by_buying_power)
 
     if params.max_position_pct is not None and params.entry_price:
         max_by_pos = int(params.account_size * params.max_position_pct / 100 / params.entry_price)
@@ -219,14 +244,38 @@ def calculate_position(params: SizingParameters) -> dict:
     if is_kelly_mode:
         kelly = calculate_kelly(params)
         calculations["kelly"] = kelly
-        # Use half-kelly budget to determine shares
-        budget = params.account_size * kelly["half_kelly_pct"] / 100
+        # Use half-kelly budget to determine shares, capped at max_risk_pct.
+        # Half-Kelly routinely exceeds sane per-trade risk (e.g. 18.5%);
+        # treating it as risk-to-stop dollars uncapped produces dangerous
+        # leverage, so the effective risk is clamped to the ceiling.
+        effective_risk_pct = kelly["half_kelly_pct"]
+        if effective_risk_pct > params.max_risk_pct:
+            effective_risk_pct = params.max_risk_pct
+            result["risk_capped"] = True
+            result.setdefault("warnings", []).append(
+                "WARNING: half-Kelly risk of {}% exceeds the per-trade risk cap "
+                "of {}%. Risk was capped at {}% (use --max-risk-pct to adjust "
+                "the ceiling).".format(
+                    kelly["half_kelly_pct"], params.max_risk_pct, params.max_risk_pct
+                )
+            )
+        result["parameters"]["effective_risk_pct"] = effective_risk_pct
+        budget = params.account_size * effective_risk_pct / 100
         if params.stop_price:
             risk_per_share = params.entry_price - params.stop_price
             risk_shares = int(budget / risk_per_share)
             result["parameters"]["stop_price"] = params.stop_price
         else:
+            # No stop: the risk budget is spent as position VALUE, which
+            # implicitly assumes a 100% loss of the position (worst case).
             risk_shares = int(budget / params.entry_price)
+            result["assumptions"] = (
+                "No stop-loss given: the {}% risk budget was treated as total "
+                "position value, assuming a 100% loss of the position in the "
+                "worst case. Provide --stop for risk-to-stop sizing.".format(
+                    effective_risk_pct
+                )
+            )
     elif params.atr is not None:
         atr_result = calculate_atr_based(params)
         calculations["atr_based"] = atr_result
@@ -284,6 +333,13 @@ def generate_markdown_report(result: dict) -> str:
         lines.append(f"- **{k}:** {v}")
     lines.append("")
 
+    for warning in result.get("warnings", []):
+        lines.append("> **{}**".format(warning))
+        lines.append("")
+    if result.get("assumptions"):
+        lines.append("> *Assumption: {}*".format(result["assumptions"]))
+        lines.append("")
+
     if result["mode"] == "budget":
         lines.append("## Kelly Criterion")
         kelly = result["calculations"]["kelly"]
@@ -309,9 +365,10 @@ def generate_markdown_report(result: dict) -> str:
             lines.append("## Constraints")
             for c in result["constraints_applied"]:
                 binding_label = " **[BINDING]**" if c.get("binding") else ""
+                limit_unit = "x margin" if c["type"] == "buying_power" else "%"
                 lines.append(
-                    "- {}: limit={}%, max_shares={}{}".format(
-                        c["type"], c["limit"], c["max_shares"], binding_label
+                    "- {}: limit={}{}, max_shares={}{}".format(
+                        c["type"], c["limit"], limit_unit, c["max_shares"], binding_label
                     )
                 )
             lines.append("")
@@ -374,6 +431,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Average loss amount for Kelly criterion",
     )
     parser.add_argument(
+        "--max-risk-pct",
+        type=float,
+        default=2.0,
+        help="Ceiling on effective per-trade risk %% in Kelly mode (default: 2.0)",
+    )
+    parser.add_argument(
+        "--margin-multiple",
+        type=float,
+        default=1.0,
+        help="Buying power multiple for margin accounts (default: 1.0 = cash account)",
+    )
+    parser.add_argument(
         "--max-position-pct",
         type=float,
         help="Maximum single position as %% of account",
@@ -434,6 +503,8 @@ def main() -> None:
         max_sector_pct=args.max_sector_pct,
         sector=args.sector,
         current_sector_exposure=args.current_sector_exposure,
+        max_risk_pct=args.max_risk_pct,
+        margin_multiple=args.margin_multiple,
     )
 
     try:
@@ -458,6 +529,10 @@ def main() -> None:
     print(f"Markdown report: {md_path}")
 
     # Also print summary to stdout
+    for warning in result.get("warnings", []):
+        print(f"\n{warning}")
+    if result.get("assumptions"):
+        print("\nAssumption: {}".format(result["assumptions"]))
     if result["mode"] == "shares":
         print(
             "\nFinal: {} shares @ ${}".format(

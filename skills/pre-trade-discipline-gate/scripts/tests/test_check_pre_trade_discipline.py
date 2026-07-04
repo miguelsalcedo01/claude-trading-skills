@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+from datetime import date
 from pathlib import Path
 
 import yaml
@@ -97,9 +98,31 @@ def base_candidate(**overrides):
     return candidate
 
 
+def market_artifact(as_of_date: str = "2026-07-03", **overrides) -> dict:
+    artifact = {
+        "skill": "exposure-coach",
+        "schema_version": "1.0",
+        "generated_at": f"{as_of_date}T15:00:00+00:00",
+        "recommendation": "NEW_ENTRY_ALLOWED",
+    }
+    artifact.update(overrides)
+    return artifact
+
+
+def circuit_artifact(as_of_date: str = "2026-07-03", **overrides) -> dict:
+    artifact = {
+        "skill": "drawdown-circuit-breaker",
+        "schema_version": "1.0",
+        "as_of_date": as_of_date,
+        "recommendation": "TRADING_ALLOWED",
+    }
+    artifact.update(overrides)
+    return artifact
+
+
 def allowed_artifacts(tmp_path: Path) -> tuple[Path, Path]:
-    market = write_json(tmp_path / "exposure.json", {"recommendation": "NEW_ENTRY_ALLOWED"})
-    circuit = write_json(tmp_path / "circuit.json", {"recommendation": "TRADING_ALLOWED"})
+    market = write_json(tmp_path / "exposure.json", market_artifact())
+    circuit = write_json(tmp_path / "circuit.json", circuit_artifact())
     return market, circuit
 
 
@@ -234,10 +257,10 @@ def test_missing_market_and_circuit_artifacts_require_review_for_actionable_orde
 
 def test_market_reduce_only_and_cash_priority_block_orders(tmp_path: Path):
     for recommendation in ("REDUCE_ONLY", "cash-priority"):
-        market = write_json(tmp_path / f"{recommendation}.json", {"recommendation": recommendation})
-        circuit = write_json(
-            tmp_path / f"{recommendation}_circuit.json", {"recommendation": "TRADING_ALLOWED"}
+        market = write_json(
+            tmp_path / f"{recommendation}.json", market_artifact(recommendation=recommendation)
         )
+        circuit = write_json(tmp_path / f"{recommendation}_circuit.json", circuit_artifact())
         result = evaluate(
             tmp_path,
             [base_candidate(symbol=recommendation)],
@@ -248,10 +271,10 @@ def test_market_reduce_only_and_cash_priority_block_orders(tmp_path: Path):
 
 
 def test_circuit_breaker_cooldown_and_halted_block_orders(tmp_path: Path):
-    market = write_json(tmp_path / "market.json", {"recommendation": "NEW_ENTRY_ALLOWED"})
+    market = write_json(tmp_path / "market.json", market_artifact())
     for recommendation in ("COOLDOWN", "HALTED", "TRADING_HALTED"):
         circuit = write_json(
-            tmp_path / f"{recommendation}.json", {"recommendation": recommendation}
+            tmp_path / f"{recommendation}.json", circuit_artifact(recommendation=recommendation)
         )
         result = evaluate(
             tmp_path,
@@ -260,6 +283,95 @@ def test_circuit_breaker_cooldown_and_halted_block_orders(tmp_path: Path):
             circuit_breaker_decision=circuit,
         )
         assert result["overall_decision"] == "NO_GO"
+
+
+def test_stale_circuit_breaker_artifact_requires_review(tmp_path: Path):
+    market = write_json(tmp_path / "market.json", market_artifact())
+    stale_circuit = write_json(
+        tmp_path / "stale_circuit.json", circuit_artifact(as_of_date="2026-07-01")
+    )
+
+    result = evaluate(
+        tmp_path,
+        [base_candidate()],
+        market_regime_decision=market,
+        circuit_breaker_decision=stale_circuit,
+    )
+
+    assert result["overall_decision"] == "REVIEW_REQUIRED"
+    assert any(
+        "circuit_breaker artifact is stale" in r
+        for r in result["candidate_results"][0]["reasons"]
+    )
+
+
+def test_artifact_without_freshness_date_requires_review(tmp_path: Path):
+    market = write_json(tmp_path / "market.json", market_artifact())
+    dateless = write_json(tmp_path / "dateless.json", {"recommendation": "TRADING_ALLOWED"})
+
+    result = evaluate(
+        tmp_path,
+        [base_candidate()],
+        market_regime_decision=market,
+        circuit_breaker_decision=dateless,
+    )
+
+    assert result["overall_decision"] == "REVIEW_REQUIRED"
+    assert any(
+        "freshness cannot be verified" in r for r in result["candidate_results"][0]["reasons"]
+    )
+
+
+def test_artifact_skill_mismatch_requires_review(tmp_path: Path):
+    market = write_json(tmp_path / "market.json", market_artifact())
+    imposter = write_json(
+        tmp_path / "imposter.json", circuit_artifact(skill="some-other-skill")
+    )
+
+    result = evaluate(
+        tmp_path,
+        [base_candidate()],
+        market_regime_decision=market,
+        circuit_breaker_decision=imposter,
+    )
+
+    assert result["overall_decision"] == "REVIEW_REQUIRED"
+    assert any(
+        "circuit_breaker artifact skill is 'some-other-skill'" in r
+        for r in result["candidate_results"][0]["reasons"]
+    )
+
+
+def test_unsupported_artifact_schema_version_requires_review(tmp_path: Path):
+    market = write_json(tmp_path / "market.json", market_artifact())
+    future_schema = write_json(
+        tmp_path / "future_schema.json", circuit_artifact(schema_version="99.0")
+    )
+
+    result = evaluate(
+        tmp_path,
+        [base_candidate()],
+        market_regime_decision=market,
+        circuit_breaker_decision=future_schema,
+    )
+
+    assert result["overall_decision"] == "REVIEW_REQUIRED"
+    assert any(
+        "schema_version '99.0' is unsupported" in r
+        for r in result["candidate_results"][0]["reasons"]
+    )
+
+
+def test_missing_risk_dollars_requires_review(tmp_path: Path):
+    result = evaluate(
+        tmp_path,
+        [base_candidate(planned_risk_dollars=None, actual_risk_dollars="n/a")],
+    )
+
+    assert result["overall_decision"] == "REVIEW_REQUIRED"
+    reasons = result["candidate_results"][0]["reasons"]
+    assert "planned_risk_dollars is missing or not a number" in reasons
+    assert "actual_risk_dollars is missing or not a number" in reasons
 
 
 def test_future_loss_events_are_ignored(tmp_path: Path):
@@ -303,6 +415,63 @@ def test_recent_partial_loss_blocks_revenge_trade(tmp_path: Path):
     result = evaluate(tmp_path, [base_candidate()], state_dir=state_dir)
 
     assert result["overall_decision"] == "NO_GO"
+    assert any(
+        "recent losing exit/trim within 24h" in r for r in result["candidate_results"][0]["reasons"]
+    )
+
+
+def test_bare_string_date_loss_yesterday_blocks_next_morning(tmp_path: Path):
+    state_dir = tmp_path / "theses"
+    write_thesis(
+        state_dir,
+        history=[
+            {
+                "status": "PARTIALLY_CLOSED",
+                "at": "2026-07-02",
+                "reason": "loss trim journaled date-only",
+                "realized_pnl": -250,
+            }
+        ],
+    )
+
+    result = evaluate(
+        tmp_path,
+        [base_candidate()],
+        state_dir=state_dir,
+        as_of=parse_as_of("2026-07-03T09:30:00-04:00"),
+    )
+
+    assert result["overall_decision"] == "NO_GO"
+    assert any(
+        "recent losing exit/trim within 24h" in r for r in result["candidate_results"][0]["reasons"]
+    )
+
+
+def test_yaml_native_date_loss_yesterday_blocks_next_morning(tmp_path: Path):
+    state_dir = tmp_path / "theses"
+    write_thesis(
+        state_dir,
+        history=[
+            {
+                "status": "PARTIALLY_CLOSED",
+                "at": date(2026, 7, 2),
+                "reason": "loss trim with YAML-native date",
+                "realized_pnl": -250,
+            }
+        ],
+    )
+    raw = (state_dir / "th_test_gm_20260702_0001.yaml").read_text()
+    assert "at: 2026-07-02\n" in raw  # unquoted, loads back as datetime.date
+
+    result = evaluate(
+        tmp_path,
+        [base_candidate()],
+        state_dir=state_dir,
+        as_of=parse_as_of("2026-07-03T09:30:00-04:00"),
+    )
+
+    assert result["overall_decision"] == "NO_GO"
+    assert not result["warnings"]
     assert any(
         "recent losing exit/trim within 24h" in r for r in result["candidate_results"][0]["reasons"]
     )

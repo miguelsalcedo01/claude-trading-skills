@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 import yaml
 
 ET = ZoneInfo("America/New_York")
+ET_DAY_END = time(23, 59, 59)
 DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 PRODUCER_UTC_MIDNIGHT_RE = re.compile(
     r"^(?P<day>\d{4}-\d{2}-\d{2})T00:00:00(?:\.0+)?(?:Z|\+00:00)$"
@@ -31,6 +32,10 @@ PRODUCER_UTC_MIDNIGHT_RE = re.compile(
 ACTIONABLE_INTENTS = {"ENTRY_READY", "ACTIONABLE", "ACTIONABLE_DAY1", "MANUAL_ORDER"}
 NON_ACTIONABLE_INTENTS = {"WATCHLIST", "DELAYED_EP_WATCH", "PEAD_HANDOFF", "IGNORE", "REJECTED"}
 TERMINAL_STATUSES = {"CLOSED", "INVALIDATED"}
+ARTIFACT_EXPECTED_SKILLS = {
+    "market_regime": {"exposure-coach", "market-regime-daily"},
+    "circuit_breaker": {"drawdown-circuit-breaker"},
+}
 CHECKLIST_ANSWER_FIELDS = (
     "entry_in_written_plan",
     "stop_predefined",
@@ -48,11 +53,25 @@ DECISION_RANK = {
 
 
 @dataclass(frozen=True)
+class EventTime:
+    """ET bounds for an event timestamp.
+
+    Exact timestamps have earliest == latest. Date-only sources span the whole
+    named ET day: earliest is 00:00:00 ET (used to decide whether the event has
+    occurred by --as-of) and latest is 23:59:59 ET (used for revenge-window
+    recency), so ambiguous times always resolve toward blocking new risk.
+    """
+
+    earliest: datetime
+    latest: datetime
+
+
+@dataclass(frozen=True)
 class LossEvent:
     thesis_id: str
     ticker: str
     pnl: float
-    at: datetime
+    at: EventTime
     source: str
 
 
@@ -90,16 +109,42 @@ def _parse_datetime(
     return parsed
 
 
-def _parse_event_datetime(value: Any) -> datetime:
-    """Parse trader-memory-core producer timestamps into ET accounting time."""
+def _parse_event_time(value: Any) -> EventTime:
+    """Parse trader-memory-core producer timestamps into ET accounting time.
+
+    Date-only values are ambiguous within the named ET day, so this risk gate
+    resolves them conservatively: the event counts as occurring from the start
+    of the named ET day (00:00:00 ET) for inclusion against --as-of, and is
+    widened to the end of the named ET day (23:59:59 ET) for revenge-window
+    recency. Date-only sources are:
+
+    - bare YYYY-MM-DD strings
+    - YAML-native dates (an unquoted YYYY-MM-DD loads as datetime.date)
+    - producer-widened UTC midnights such as 2026-07-02T00:00:00+00:00
+      (trader-memory-core widens bare dates, e.g. trim --date 2026-07-02),
+      as strings or as YAML-native datetimes
+    """
+    day: date | None = None
     if isinstance(value, str):
         stripped = value.strip()
         if DATE_ONLY_RE.match(stripped):
-            return datetime.combine(date.fromisoformat(stripped), time.min, tzinfo=ET)
-        match = PRODUCER_UTC_MIDNIGHT_RE.match(stripped)
-        if match:
-            return datetime.combine(date.fromisoformat(match.group("day")), time.min, tzinfo=ET)
-    return _parse_datetime(value).astimezone(ET)
+            day = date.fromisoformat(stripped)
+        else:
+            match = PRODUCER_UTC_MIDNIGHT_RE.match(stripped)
+            if match:
+                day = date.fromisoformat(match.group("day"))
+    elif isinstance(value, datetime):
+        if value.utcoffset() in (None, timedelta(0)) and value.time() == time.min:
+            day = value.date()
+    elif isinstance(value, date):
+        day = value
+    if day is not None:
+        return EventTime(
+            earliest=datetime.combine(day, time.min, tzinfo=ET),
+            latest=datetime.combine(day, ET_DAY_END, tzinfo=ET),
+        )
+    at = _parse_datetime(value).astimezone(ET)
+    return EventTime(earliest=at, latest=at)
 
 
 def parse_as_of(value: str | None) -> datetime:
@@ -178,12 +223,12 @@ def load_theses(state_dir: Path | None) -> tuple[list[dict[str, Any]], list[str]
     return theses, warnings
 
 
-def _terminal_event_datetime(thesis: dict[str, Any]) -> datetime | None:
+def _terminal_event_time(thesis: dict[str, Any]) -> EventTime | None:
     exit_data = thesis.get("exit") or {}
     exit_date = exit_data.get("actual_date") if isinstance(exit_data, dict) else None
     if exit_date:
         try:
-            return _parse_event_datetime(exit_date)
+            return _parse_event_time(exit_date)
         except Exception:
             return None
     history = thesis.get("status_history", [])
@@ -192,7 +237,7 @@ def _terminal_event_datetime(thesis: dict[str, Any]) -> datetime | None:
     for event in reversed(history):
         if isinstance(event, dict) and event.get("status") in TERMINAL_STATUSES and event.get("at"):
             try:
-                return _parse_event_datetime(event["at"])
+                return _parse_event_time(event["at"])
             except Exception:
                 return None
     return None
@@ -220,11 +265,11 @@ def collect_loss_events(
             ledger_events += 1
             try:
                 pnl = float(event["realized_pnl"])
-                at = _parse_event_datetime(event.get("at"))
+                at = _parse_event_time(event.get("at"))
             except Exception as exc:  # noqa: BLE001 - keep other thesis entries usable.
                 warnings.append(f"Skipped realized_pnl event for {thesis_id}: {exc}")
                 continue
-            if pnl < 0 and at <= as_of:
+            if pnl < 0 and at.earliest <= as_of:
                 losses.append(LossEvent(thesis_id, ticker, pnl, at, "status_history.realized_pnl"))
 
         if thesis.get("status") not in TERMINAL_STATUSES or ledger_events:
@@ -237,13 +282,13 @@ def collect_loss_events(
             continue
         if pnl >= 0:
             continue
-        at = _terminal_event_datetime(thesis)
+        at = _terminal_event_time(thesis)
         if at is None:
             warnings.append(f"Could not infer terminal loss date for {thesis_id}")
             continue
-        if at <= as_of:
+        if at.earliest <= as_of:
             losses.append(LossEvent(thesis_id, ticker, pnl, at, "outcome.pnl_dollars"))
-    return sorted(losses, key=lambda item: item.at, reverse=True), warnings
+    return sorted(losses, key=lambda item: item.at.latest, reverse=True), warnings
 
 
 def recent_losses(
@@ -254,10 +299,28 @@ def recent_losses(
 ) -> tuple[list[LossEvent], list[str]]:
     losses, warnings = collect_loss_events(theses, as_of=as_of)
     cutoff = as_of - timedelta(hours=window_hours)
-    return [loss for loss in losses if cutoff <= loss.at <= as_of], warnings
+    return [loss for loss in losses if loss.at.latest >= cutoff], warnings
 
 
-def _artifact_decision(path: Path | None, *, artifact_name: str) -> tuple[str | None, list[str]]:
+def _artifact_as_of_date(data: dict[str, Any]) -> date | None:
+    """Best-effort ET date an upstream artifact claims to describe."""
+    for key in ("as_of", "as_of_date", "generated_at"):
+        value = data.get(key)
+        if value is None or value == "":
+            continue
+        try:
+            return _parse_event_time(value).latest.date()
+        except Exception:  # noqa: BLE001 - unusable field, try the next one.
+            continue
+    return None
+
+
+def _artifact_decision(
+    path: Path | None,
+    *,
+    artifact_name: str,
+    as_of: datetime,
+) -> tuple[str | None, list[str]]:
     if path is None:
         return None, [f"{artifact_name} artifact not provided"]
     if not path.exists():
@@ -268,14 +331,43 @@ def _artifact_decision(path: Path | None, *, artifact_name: str) -> tuple[str | 
         return None, [f"{artifact_name} artifact could not be read: {exc}"]
     if not isinstance(data, dict):
         return None, [f"{artifact_name} artifact must be an object"]
+
+    problems: list[str] = []
+    expected_skills = ARTIFACT_EXPECTED_SKILLS.get(artifact_name, set())
+    skill = data.get("skill")
+    if skill is not None and expected_skills and str(skill) not in expected_skills:
+        problems.append(
+            f"{artifact_name} artifact skill is {skill!r}; "
+            f"expected one of {sorted(expected_skills)}"
+        )
+    schema_version = data.get("schema_version")
+    if schema_version is not None and str(schema_version).split(".")[0] != "1":
+        problems.append(
+            f"{artifact_name} artifact schema_version {schema_version!r} is unsupported"
+        )
+    as_of_date = as_of.astimezone(ET).date()
+    artifact_date = _artifact_as_of_date(data)
+    if artifact_date is None:
+        problems.append(
+            f"{artifact_name} artifact has no usable as_of/as_of_date/generated_at date; "
+            "freshness cannot be verified"
+        )
+    elif artifact_date != as_of_date:
+        problems.append(
+            f"{artifact_name} artifact is stale: dated {artifact_date.isoformat()} "
+            f"but the gate as-of date is {as_of_date.isoformat()}"
+        )
+    if problems:
+        return None, problems
+
     for key in ("recommendation", "decision", "status"):
         if data.get(key) is not None:
             return _normalize_token(data[key]), []
     return None, [f"{artifact_name} artifact has no recommendation field"]
 
 
-def evaluate_market_regime(path: Path | None) -> tuple[str, list[str]]:
-    decision, warnings = _artifact_decision(path, artifact_name="market_regime")
+def evaluate_market_regime(path: Path | None, *, as_of: datetime) -> tuple[str, list[str]]:
+    decision, warnings = _artifact_decision(path, artifact_name="market_regime", as_of=as_of)
     if decision == "NEW_ENTRY_ALLOWED":
         return "OK", []
     if decision in {"REDUCE_ONLY", "CASH_PRIORITY"}:
@@ -285,8 +377,8 @@ def evaluate_market_regime(path: Path | None) -> tuple[str, list[str]]:
     return "REVIEW_REQUIRED", warnings
 
 
-def evaluate_circuit_breaker(path: Path | None) -> tuple[str, list[str]]:
-    decision, warnings = _artifact_decision(path, artifact_name="circuit_breaker")
+def evaluate_circuit_breaker(path: Path | None, *, as_of: datetime) -> tuple[str, list[str]]:
+    decision, warnings = _artifact_decision(path, artifact_name="circuit_breaker", as_of=as_of)
     if decision == "TRADING_ALLOWED":
         return "OK", []
     if decision in {"COOLDOWN", "HALTED", "TRADING_HALTED"}:
@@ -340,6 +432,14 @@ def _evaluate_candidate_checklist(candidate: dict[str, Any], result: CandidateRe
 
     planned_risk = _to_float_or_none(candidate.get("planned_risk_dollars"))
     actual_risk = _to_float_or_none(candidate.get("actual_risk_dollars"))
+    if planned_risk is None:
+        _raise_candidate_decision(
+            result, "REVIEW_REQUIRED", "planned_risk_dollars is missing or not a number"
+        )
+    if actual_risk is None:
+        _raise_candidate_decision(
+            result, "REVIEW_REQUIRED", "actual_risk_dollars is missing or not a number"
+        )
     if planned_risk is not None and actual_risk is not None and actual_risk > planned_risk:
         _raise_candidate_decision(
             result,
@@ -374,7 +474,7 @@ def _recent_loss_reasons(losses: list[LossEvent], window_hours: float) -> list[s
     for loss in losses[:5]:
         reasons.append(
             "recent losing exit/trim within "
-            f"{window_hours:g}h: {loss.ticker} {loss.pnl:.2f} at {loss.at.isoformat()} "
+            f"{window_hours:g}h: {loss.ticker} {loss.pnl:.2f} at {loss.at.latest.isoformat()} "
             f"({loss.source})"
         )
     return reasons
@@ -471,8 +571,10 @@ def evaluate_pre_trade_gate(
 
     actionable_candidates = [candidate for candidate in candidate_results if candidate.actionable]
     if actionable_candidates:
-        market_status, market_reasons = evaluate_market_regime(market_regime_decision)
-        circuit_status, circuit_reasons = evaluate_circuit_breaker(circuit_breaker_decision)
+        market_status, market_reasons = evaluate_market_regime(market_regime_decision, as_of=as_of)
+        circuit_status, circuit_reasons = evaluate_circuit_breaker(
+            circuit_breaker_decision, as_of=as_of
+        )
         losses, loss_warnings = recent_losses(
             theses,
             as_of=as_of,

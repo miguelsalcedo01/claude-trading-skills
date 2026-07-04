@@ -82,6 +82,11 @@ python3 skills/position-sizer/scripts/position_sizer.py \
   --output-dir reports/
 ```
 
+Safety flags (all modes):
+
+- `--max-risk-pct` (default 2.0): ceiling on effective per-trade risk in Kelly shares mode. Half-Kelly percentages routinely exceed sane per-trade risk (e.g. 18.5%), so the effective risk is capped and a warning is emitted showing both figures.
+- `--margin-multiple` (default 1.0): buying power multiple. Positions are always capped at what the account can actually buy (`account_size * margin_multiple / entry_price`); raise this for margin accounts (e.g. 2.0 for Reg-T). Reported as binding constraint `buying_power` when it limits the position.
+
 ### Step 3: Load Methodology Reference
 
 Read `references/sizing_methodologies.md` to provide context on the chosen method, risk guidelines, and portfolio constraint best practices.

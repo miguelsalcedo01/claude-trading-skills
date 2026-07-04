@@ -1,21 +1,22 @@
 #!/usr/bin/env python3
 """
-Trend Template Calculator - Minervini's 7-Point Stage 2 Filter
+Trend Template Calculator - Minervini's 8-Point Stage 2 Filter
 
 Evaluates whether a stock meets Minervini's Stage 2 uptrend criteria.
 This is the primary gate filter - stocks must pass this to be evaluated for VCP.
 
-The 7-Point Trend Template:
+The 8-Point Trend Template:
 1. Price > 150-day SMA AND Price > 200-day SMA
 2. 150-day SMA > 200-day SMA
 3. 200-day SMA trending up for at least 22 trading days (1 month)
-4. Price > 50-day SMA
-5. Price at least 25% above 52-week low
-6. Price within 25% of 52-week high
-7. Relative Strength rating > 70 (estimated)
+4. 50-day SMA above both the 150-day SMA and the 200-day SMA
+5. Price > 50-day SMA
+6. Price at least 30% above 52-week low
+7. Price within 25% of 52-week high
+8. Relative Strength rating > 70 (estimated)
 
-Scoring: Each criterion = 14.3 points (7 x 14.3 = ~100)
-Pass threshold: >= 85 (must meet at least 6 of 7 criteria)
+Scoring: Each criterion = 12.5 points (8 x 12.5 = 100)
+Pass threshold: >= 85 (must meet at least 7 of 8 criteria)
 """
 
 from typing import Optional
@@ -29,12 +30,12 @@ def calculate_trend_template(
     max_sma200_extension: float = 50.0,
 ) -> dict:
     """
-    Evaluate stock against Minervini's 7-point Trend Template.
+    Evaluate stock against Minervini's 8-point Trend Template.
 
     Args:
         historical_prices: Daily OHLCV data (most recent first), need 200+ days
         quote_data: Current quote with price, yearHigh, yearLow
-        rs_rank: Pre-calculated RS rank estimate (0-99). If None, criterion 7 is skipped.
+        rs_rank: Pre-calculated RS rank estimate (0-99). If None, criterion 8 is skipped.
 
     Returns:
         Dict with score (0-100), criteria details, pass/fail status
@@ -53,7 +54,7 @@ def calculate_trend_template(
     year_low = quote_data.get("yearLow", 0)
 
     criteria = {}
-    points_per_criterion = 14.3
+    points_per_criterion = 12.5
 
     # Criterion 1: Price > SMA150 AND Price > SMA200
     sma150 = _sma(closes, 150)
@@ -113,66 +114,81 @@ def calculate_trend_template(
             "detail": "Insufficient data",
         }
 
-    # Criterion 4: Price > SMA50
+    # Criterion 4: SMA50 above both SMA150 and SMA200 (bullish MA ordering)
     sma50 = _sma(closes, 50)
     c4_pass = False
-    if sma50 is not None:
-        c4_pass = price > sma50
-    criteria["c4_price_above_sma50"] = {
+    if sma50 is not None and sma150 is not None and sma200 is not None:
+        c4_pass = sma50 > sma150 and sma50 > sma200
+        c4_detail = f"SMA50 ${sma50:.2f} vs SMA150 ${sma150:.2f} / SMA200 ${sma200:.2f}"
+    elif sma50 is not None and sma150 is not None:
+        c4_pass = sma50 > sma150
+        c4_detail = f"SMA50 ${sma50:.2f} vs SMA150 ${sma150:.2f}"
+    else:
+        c4_detail = "Insufficient data for SMA50/SMA150 comparison"
+    criteria["c4_sma50_above_sma150_200"] = {
         "passed": c4_pass,
+        "detail": c4_detail,
+    }
+
+    # Criterion 5: Price > SMA50
+    c5_pass = False
+    if sma50 is not None:
+        c5_pass = price > sma50
+    criteria["c5_price_above_sma50"] = {
+        "passed": c5_pass,
         "detail": f"Price ${price:.2f} vs SMA50 ${sma50:.2f}" if sma50 else "Insufficient data",
     }
 
-    # Criterion 5: Price at least 25% above 52-week low
-    c5_pass = False
+    # Criterion 6: Price at least 30% above 52-week low
+    c6_pass = False
     if year_low > 0:
         pct_above_low = (price - year_low) / year_low * 100
-        c5_pass = pct_above_low >= 25
-        criteria["c5_25pct_above_52w_low"] = {
-            "passed": c5_pass,
-            "detail": f"{pct_above_low:.1f}% above 52w low ${year_low:.2f} (need >= 25%)",
+        c6_pass = pct_above_low >= 30
+        criteria["c6_30pct_above_52w_low"] = {
+            "passed": c6_pass,
+            "detail": f"{pct_above_low:.1f}% above 52w low ${year_low:.2f} (need >= 30%)",
         }
     else:
-        criteria["c5_25pct_above_52w_low"] = {
+        criteria["c6_30pct_above_52w_low"] = {
             "passed": False,
             "detail": "52-week low data unavailable",
         }
 
-    # Criterion 6: Price within 25% of 52-week high
-    c6_pass = False
+    # Criterion 7: Price within 25% of 52-week high
+    c7_pass = False
     if year_high > 0:
         pct_below_high = (year_high - price) / year_high * 100
-        c6_pass = pct_below_high <= 25
-        criteria["c6_within_25pct_52w_high"] = {
-            "passed": c6_pass,
+        c7_pass = pct_below_high <= 25
+        criteria["c7_within_25pct_52w_high"] = {
+            "passed": c7_pass,
             "detail": f"{pct_below_high:.1f}% below 52w high ${year_high:.2f} (need <= 25%)",
         }
     else:
-        criteria["c6_within_25pct_52w_high"] = {
+        criteria["c7_within_25pct_52w_high"] = {
             "passed": False,
             "detail": "52-week high data unavailable",
         }
 
-    # Criterion 7: RS Rating > 70
-    c7_pass = False
+    # Criterion 8: RS Rating > 70
+    c8_pass = False
     if rs_rank is not None:
-        c7_pass = rs_rank > 70
-        criteria["c7_rs_rank_above_70"] = {
-            "passed": c7_pass,
+        c8_pass = rs_rank > 70
+        criteria["c8_rs_rank_above_70"] = {
+            "passed": c8_pass,
             "detail": f"RS Rank: {rs_rank} (need > 70)",
         }
     else:
-        criteria["c7_rs_rank_above_70"] = {
+        criteria["c8_rs_rank_above_70"] = {
             "passed": False,
             "detail": "RS Rank not yet calculated",
         }
 
-    # Raw score from 7 criteria (gate判定用)
+    # Raw score from 8 criteria (gate判定用)
     passed_count = sum(1 for c in criteria.values() if c["passed"])
     raw_score = round(passed_count * points_per_criterion, 1)
     raw_score = min(100, raw_score)
 
-    # Pass threshold: 85+ (6/7 criteria) - uses RAW score only
+    # Pass threshold: 85+ (7/8 criteria) - uses RAW score only
     passed = raw_score >= 85
 
     # Extended penalty: deduct for price too far above SMA50 (ranking用)
@@ -203,7 +219,7 @@ def calculate_trend_template(
         if sma200_distance_pct is not None
         else None,
         "criteria_passed": passed_count,
-        "criteria_total": 7,
+        "criteria_total": 8,
         "criteria": criteria,
         "sma50": round(sma50, 2) if sma50 else None,
         "sma150": round(sma150, 2) if sma150 else None,

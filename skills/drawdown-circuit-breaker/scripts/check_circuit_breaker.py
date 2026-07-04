@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 import yaml
 
 ET = ZoneInfo("America/New_York")
+ET_DAY_END = time(23, 59, 59)
 TERMINAL_STATUSES = {"CLOSED", "INVALIDATED"}
 RECOMMENDATION_RANK = {"TRADING_ALLOWED": 0, "COOLDOWN": 1, "HALTED": 2}
 DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -41,16 +42,30 @@ class CircuitConfig:
 
 
 @dataclass(frozen=True)
+class EventTime:
+    """ET bounds for an event timestamp.
+
+    Exact timestamps have earliest == latest. Date-only sources span the whole
+    named ET day: earliest is 00:00:00 ET (used to decide whether the event has
+    occurred by --as-of) and latest is 23:59:59 ET (used for cooldown and
+    recency math), so ambiguous times always resolve toward blocking new risk.
+    """
+
+    earliest: datetime
+    latest: datetime
+
+
+@dataclass(frozen=True)
 class LedgerEntry:
     realized_pnl: float
-    at: datetime
+    at: EventTime
 
 
 @dataclass(frozen=True)
 class TerminalResult:
     pnl: float
     event_key: str
-    event_at: datetime | None
+    event_at: EventTime
     thesis_id: str
     ticker: str
 
@@ -60,32 +75,59 @@ def _parse_datetime(
     *,
     default_tz: ZoneInfo | timezone = timezone.utc,
 ) -> datetime:
-    if not isinstance(value, str) or not value.strip():
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, date):
+        parsed = datetime.combine(value, time.min)
+    elif isinstance(value, str) and value.strip():
+        normalized = value.strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            parsed = datetime.combine(date.fromisoformat(normalized), time.min)
+    else:
         raise ValueError("expected non-empty datetime string")
-    normalized = value.strip().replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError:
-        parsed_date = date.fromisoformat(normalized)
-        parsed = datetime.combine(parsed_date, time.min)
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=default_tz)
     return parsed
 
 
-def _parse_event_datetime(value: Any) -> datetime:
+def _parse_event_time(value: Any) -> EventTime:
     """Parse trader-memory-core event timestamps into ET accounting time.
 
-    trader-memory-core widens bare dates (for example trim --date 2026-07-02)
-    to 2026-07-02T00:00:00+00:00. Treat that producer artifact as the named
-    ET accounting date instead of the prior ET evening.
+    Date-only values are ambiguous within the named ET day, so this risk gate
+    resolves them conservatively: the event counts as occurring from the start
+    of the named ET day (00:00:00 ET) for inclusion against --as-of, and is
+    widened to the end of the named ET day (23:59:59 ET) for cooldown and
+    recency math. Date-only sources are:
+
+    - bare YYYY-MM-DD strings
+    - YAML-native dates (an unquoted YYYY-MM-DD loads as datetime.date)
+    - producer-widened UTC midnights such as 2026-07-02T00:00:00+00:00
+      (trader-memory-core widens bare dates, e.g. trim --date 2026-07-02),
+      as strings or as YAML-native datetimes
     """
+    day: date | None = None
     if isinstance(value, str):
         stripped = value.strip()
-        match = PRODUCER_UTC_MIDNIGHT_RE.match(stripped)
-        if match:
-            return datetime.combine(date.fromisoformat(match.group("day")), time.min, tzinfo=ET)
-    return _parse_datetime(value).astimezone(ET)
+        if DATE_ONLY_RE.match(stripped):
+            day = date.fromisoformat(stripped)
+        else:
+            match = PRODUCER_UTC_MIDNIGHT_RE.match(stripped)
+            if match:
+                day = date.fromisoformat(match.group("day"))
+    elif isinstance(value, datetime):
+        if value.utcoffset() in (None, timedelta(0)) and value.time() == time.min:
+            day = value.date()
+    elif isinstance(value, date):
+        day = value
+    if day is not None:
+        return EventTime(
+            earliest=datetime.combine(day, time.min, tzinfo=ET),
+            latest=datetime.combine(day, ET_DAY_END, tzinfo=ET),
+        )
+    at = _parse_datetime(value).astimezone(ET)
+    return EventTime(earliest=at, latest=at)
 
 
 def parse_as_of(value: str | None) -> datetime:
@@ -137,6 +179,16 @@ def build_config(args: argparse.Namespace) -> CircuitConfig:
     for name in ("max_daily_loss_pct", "weekly_drawdown_pct", "monthly_drawdown_pct"):
         if getattr(config, name) <= 0:
             raise ValueError(f"{name} must be positive")
+    if config.max_daily_loss_pct > config.weekly_drawdown_pct:
+        raise ValueError(
+            "max_daily_loss_pct must not exceed weekly_drawdown_pct "
+            f"({config.max_daily_loss_pct} > {config.weekly_drawdown_pct})"
+        )
+    if config.weekly_drawdown_pct > config.monthly_drawdown_pct:
+        raise ValueError(
+            "weekly_drawdown_pct must not exceed monthly_drawdown_pct "
+            f"({config.weekly_drawdown_pct} > {config.monthly_drawdown_pct})"
+        )
     return config
 
 
@@ -186,7 +238,7 @@ def _iter_ledger_entries(theses: Iterable[dict]) -> tuple[list[LedgerEntry], lis
                 continue
             try:
                 realized_pnl = float(event["realized_pnl"])
-                at = _parse_event_datetime(event.get("at"))
+                at = _parse_event_time(event.get("at"))
             except Exception as exc:  # noqa: BLE001 - malformed ledger entry should not block.
                 warnings.append(f"Skipped realized_pnl event for {source}: {exc}")
                 continue
@@ -214,7 +266,7 @@ def _iter_ledger_entries(theses: Iterable[dict]) -> tuple[list[LedgerEntry], lis
                     )
                 continue
 
-            event_at = _terminal_event_datetime(thesis)
+            event_at = _terminal_event_time(thesis)
             if event_at is None:
                 warnings.append(
                     "Could not infer missing realized_pnl from outcome.pnl_dollars for "
@@ -229,12 +281,12 @@ def _iter_ledger_entries(theses: Iterable[dict]) -> tuple[list[LedgerEntry], lis
     return entries, warnings
 
 
-def _terminal_event_datetime(thesis: dict) -> datetime | None:
+def _terminal_event_time(thesis: dict) -> EventTime | None:
     exit_data = thesis.get("exit") or {}
     exit_date = exit_data.get("actual_date") if isinstance(exit_data, dict) else None
     if exit_date:
         try:
-            return _parse_event_datetime(exit_date)
+            return _parse_event_time(exit_date)
         except ValueError:
             return None
     history = thesis.get("status_history", [])
@@ -243,7 +295,7 @@ def _terminal_event_datetime(thesis: dict) -> datetime | None:
     for event in reversed(history):
         if isinstance(event, dict) and event.get("status") in TERMINAL_STATUSES and event.get("at"):
             try:
-                return _parse_event_datetime(event["at"])
+                return _parse_event_time(event["at"])
             except ValueError:
                 return None
     return None
@@ -261,7 +313,7 @@ def collect_terminal_results(theses: Iterable[dict]) -> tuple[list[TerminalResul
                 f"Skipped terminal thesis with missing pnl_dollars: {thesis.get('thesis_id')}"
             )
             continue
-        event_at = _terminal_event_datetime(thesis)
+        event_at = _terminal_event_time(thesis)
         if event_at is None:
             warnings.append(
                 f"Skipped terminal thesis without valid exit date: {thesis.get('thesis_id')}"
@@ -275,13 +327,13 @@ def collect_terminal_results(theses: Iterable[dict]) -> tuple[list[TerminalResul
         results.append(
             TerminalResult(
                 pnl=pnl,
-                event_key=event_at.date().isoformat(),
+                event_key=event_at.latest.date().isoformat(),
                 event_at=event_at,
                 thesis_id=str(thesis.get("thesis_id", "")),
                 ticker=str(thesis.get("ticker", "")),
             )
         )
-    results.sort(key=lambda item: (item.event_at, item.ticker))
+    results.sort(key=lambda item: (item.event_at.latest, item.ticker))
     return results, warnings
 
 
@@ -296,7 +348,8 @@ def _sum_realized_between(
         sum(
             entry.realized_pnl
             for entry in entries
-            if entry.at <= as_of_et and start_date <= entry.at.date() <= end_date
+            if entry.at.earliest <= as_of_et
+            and start_date <= entry.at.earliest.date() <= end_date
         ),
         2,
     )
@@ -330,9 +383,9 @@ def _iso_or_none(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _consecutive_losses(results: list[TerminalResult]) -> tuple[int, datetime | None]:
+def _consecutive_losses(results: list[TerminalResult]) -> tuple[int, EventTime | None]:
     count = 0
-    last_loss_exit_at: datetime | None = None
+    last_loss_exit_at: EventTime | None = None
     for result in reversed(results):
         if result.pnl >= 0:
             break
@@ -366,9 +419,7 @@ def evaluate_circuit_breaker(
     month_start = as_of_date.replace(day=1)
 
     terminal_results = [
-        result
-        for result in terminal_results
-        if result.event_at is not None and result.event_at <= as_of_et
+        result for result in terminal_results if result.event_at.earliest <= as_of_et
     ]
 
     realized_today = _sum_realized_between(ledger_entries, as_of_date, as_of_date, as_of_et)
@@ -396,7 +447,7 @@ def evaluate_circuit_breaker(
         )
 
     if consecutive_losses >= config.losing_streak_n and last_loss_exit_at is not None:
-        active_until = last_loss_exit_at + timedelta(hours=config.cooldown_hours)
+        active_until = last_loss_exit_at.latest + timedelta(hours=config.cooldown_hours)
         if as_of_et < active_until:
             triggered_rules.append(
                 {
@@ -407,7 +458,7 @@ def evaluate_circuit_breaker(
                     "severity": "COOLDOWN",
                     "detail": (
                         f"{consecutive_losses} consecutive losing closes; last loss exit "
-                        f"{last_loss_exit_at.isoformat()}."
+                        f"{last_loss_exit_at.latest.isoformat()}."
                     ),
                 }
             )
@@ -470,7 +521,9 @@ def evaluate_circuit_breaker(
             "realized_pnl_wtd": realized_wtd,
             "realized_pnl_mtd": realized_mtd,
             "consecutive_losses": consecutive_losses,
-            "last_loss_exit_at": _iso_or_none(last_loss_exit_at),
+            "last_loss_exit_at": _iso_or_none(
+                last_loss_exit_at.latest if last_loss_exit_at is not None else None
+            ),
             "theses_scanned": len(theses),
         },
         "account_size": account_size,

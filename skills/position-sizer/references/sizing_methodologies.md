@@ -134,7 +134,7 @@ Where W = historical win rate (0 to 1).
 
 | Metric | Full Kelly | Half Kelly | Quarter Kelly |
 |--------|-----------|-----------|---------------|
-| Growth rate | 100% | ~75% | ~50% |
+| Growth rate | 100% | ~75% | ~44% |
 | Max drawdown | Severe (50%+) | Moderate (25-35%) | Mild (15-20%) |
 | Practical use | Never | Aggressive | Conservative |
 
@@ -159,7 +159,9 @@ Example:
 
 1. **Budget Mode** (no entry price): Returns a recommended risk budget as a percentage of account. Useful for capital allocation planning before identifying specific entries.
 
-2. **Shares Mode** (with entry and stop): Converts the half-Kelly budget into a specific share count using the entry/stop distance.
+2. **Shares Mode** (with entry and stop): Converts the half-Kelly budget into a specific share count using the entry/stop distance. Because half-Kelly percentages routinely exceed sane per-trade risk (e.g. 18.5% in the example above), the effective risk is capped at a per-trade ceiling (default 2%, configurable via `--max-risk-pct`). When the cap fires, the tool emits a warning showing both the half-Kelly figure and the capped figure.
+
+If an entry is given but no stop, the same (capped) risk budget is spent as total position VALUE instead of risk-to-stop dollars — an implicit assumption that the worst case is a 100% loss of the position. This is deliberately conservative; provide a stop for risk-to-stop sizing.
 
 ### When to Use
 
@@ -171,6 +173,16 @@ Example:
 ---
 
 ## Portfolio Constraints
+
+### Buying Power
+
+An account cannot buy more stock than it can pay for. The position sizer always applies an implicit buying power constraint:
+
+```
+max_shares = int(account_size * margin_multiple / entry_price)
+```
+
+`margin_multiple` defaults to 1.0 (cash account); pass `--margin-multiple 2.0` for a Reg-T margin account or `--margin-multiple 4.0` for intraday margin. When this constraint limits the position, it is reported as the binding constraint `buying_power`.
 
 ### Maximum Position Size
 
@@ -218,9 +230,10 @@ When multiple constraints apply, the strictest (minimum share count) wins. The p
 
 Priority order:
 1. Risk-based shares (from Fixed Fractional, ATR, or Kelly)
-2. Max position % limit
-3. Max sector % limit
-4. Final = minimum of all candidates
+2. Buying power (account_size * margin_multiple)
+3. Max position % limit
+4. Max sector % limit
+5. Final = minimum of all candidates
 
 ---
 
