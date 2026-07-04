@@ -77,7 +77,7 @@ class TestAlpacaAdapterETB:
         assert status["can_open_new_short"] is True
         assert status["shortable"] is True
         assert status["easy_to_borrow"] is True
-        assert status["borrow_fee_apr"] == 0.0
+        assert status["borrow_fee_apr"] is None  # ETB borrow is not free; no rate is quoted
         assert status["borrow_fee_manual_check_required"] is False
         assert status["manual_locate_required"] is True
         assert status["source"] == "alpaca_v2_assets"

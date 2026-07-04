@@ -28,9 +28,15 @@ adapter encodes this exactly:
 
 ```
 can_open_new_short = shortable AND easy_to_borrow
-borrow_fee_apr     = 0.0 if easy_to_borrow else None
+borrow_fee_apr     = None   # varies daily per symbol; NOT zero for ETB
 manual_locate_required = True   # always
 ```
+
+**ETB is not free borrow.** Alpaca (like essentially every broker) charges
+a daily stock-borrow fee on short positions including ETB names; the rate
+varies by symbol and day. This planner cannot know the rate in advance, so
+it reports no number rather than a misleading `0.0` — factor carry cost
+into any hold that extends beyond the day.
 
 A name that is `shortable=True` but `easy_to_borrow=False` (HTB) cannot
 be opened on Alpaca regardless of locate. Phase 2 marks these as
@@ -59,9 +65,32 @@ This deliberately excludes a fixed share count. ORL / first-red /
 VWAP-fail entries only have known prices intraday, so committing to a
 share count pre-market would be inaccurate.
 
+## Short-Selling Tail Risk
+
+Every number this planner emits is **planned** risk. On this specific
+strategy — shorting parabolic small caps — realized loss is routinely
+**2-5× planned risk** when a tail event intervenes. Assume it will.
+
+- **Asymmetric loss**: a long can lose 100%; a short's loss is unbounded.
+  A parabolic that doubles against the entry costs 100% of position value.
+- **LULD trading halts**: parabolic small caps halt constantly. A stop
+  above the high of day **cannot fill through a halt**, and the reopening
+  print can be multiples of the planned risk away. `risk_at_trigger_usd`
+  is not a maximum loss — treat 3× as the working assumption.
+- **Short squeezes**: forced buying from other shorts' stops and margin
+  calls accelerates exactly when the trade is most wrong.
+- **Forced buy-ins**: the broker can close the position without consent
+  if borrow is recalled, at any price.
+- **Borrow fees**: accrue daily, including on ETB names (see above).
+- **No re-entry**: after 2 stopped attempts on the same name in one day,
+  stand down. Re-shorting a runner on tilt is the canonical short-side
+  account-blowup pattern. The FSM's per-plan no-re-entry rule does not
+  protect against manually spinning up a fresh plan — that discipline is
+  the trader's.
+
 ## Daily loss limits
 
 Not enforced in this MVP. The trader is responsible for honoring
-account-level circuit breakers. A future revision can add a `state/`
-file recording realized P&L and reject new plans when the daily loss
-limit is hit.
+account-level circuit breakers (see the `drawdown-circuit-breaker`
+skill). A future revision can add a `state/` file recording realized
+P&L and reject new plans when the daily loss limit is hit.

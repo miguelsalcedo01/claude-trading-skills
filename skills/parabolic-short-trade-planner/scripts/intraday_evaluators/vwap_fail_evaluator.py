@@ -145,11 +145,9 @@ def evaluate(
                 out["entry_actual"] = round(
                     out["rejection_bar_low"] - ENTRY_OFFSET_BELOW_REJECTION_LOW, 4
                 )
-                # Stop is the VWAP-reclaim point — use the retest bar's
-                # close (the price that proved VWAP was broken below).
-                # If the retest happened at exactly VWAP, that's a
-                # principled stop because a re-reclaim there means the
-                # whole pattern failed.
+                # Stop is the retest bar's HIGH — the most conservative of the
+                # candidate stops (widest for a short). Price back above the
+                # retest high means the VWAP rejection failed outright.
                 out["stop_actual"] = round(out["retest_bar_high"], 4)
             prior_session_high = out["session_high"]
             continue

@@ -71,8 +71,11 @@ def calculate_newness(quote: dict, historical_prices: Optional[dict] = None) -> 
         if current_price >= week_52_high * 0.995 and current_volume > avg_volume * 1.4:
             breakout_detected = True
 
+    # Elevated volume without being at the high (near-pivot accumulation)
+    volume_elevated = bool(current_volume and avg_volume and current_volume > avg_volume * 1.4)
+
     # Calculate score
-    score = score_newness(distance_from_high_pct, breakout_detected)
+    score = score_newness(distance_from_high_pct, breakout_detected, volume_elevated)
 
     # Generate interpretation
     interpretation = interpret_newness_score(score, distance_from_high_pct, breakout_detected)
@@ -92,29 +95,35 @@ def calculate_newness(quote: dict, historical_prices: Optional[dict] = None) -> 
     }
 
 
-def score_newness(distance_from_high_pct: float, breakout_detected: bool) -> int:
+def score_newness(
+    distance_from_high_pct: float,
+    breakout_detected: bool,
+    volume_elevated: bool = False,
+) -> int:
     """
     Score N component based on price position and breakout
 
     Args:
         distance_from_high_pct: Distance from 52-week high (negative = below high)
-        breakout_detected: Boolean indicating volume-confirmed breakout
+        breakout_detected: Volume-confirmed breakout (within 0.5% of high on 1.4x volume)
+        volume_elevated: Volume 40%+ above average without being at the high
 
     Returns:
         Score (0-100)
 
-    Scoring Logic:
-    - Within 5% of high + breakout: 100
-    - Within 10% of high + breakout: 80
-    - Within 15% of high OR breakout: 60
+    Scoring Logic (breakout_detected implies being at the high, so it maps
+    directly to 100; the 80 tier rewards near-pivot elevated volume):
+    - At new high on 1.4x volume (breakout): 100
+    - Within 5% of high on elevated volume: 80
+    - Within 15% of high: 60
     - Within 25% of high: 40
     - >25% from high: 20
     """
-    if distance_from_high_pct >= -5 and breakout_detected:
+    if breakout_detected:
         return 100  # Perfect setup - at new highs with volume
-    elif distance_from_high_pct >= -10 and breakout_detected:
-        return 80  # Strong momentum
-    elif distance_from_high_pct >= -15 or breakout_detected:
+    elif distance_from_high_pct >= -5 and volume_elevated:
+        return 80  # Near pivot with accumulation
+    elif distance_from_high_pct >= -15:
         return 60  # Acceptable
     elif distance_from_high_pct >= -25:
         return 40  # Weak momentum

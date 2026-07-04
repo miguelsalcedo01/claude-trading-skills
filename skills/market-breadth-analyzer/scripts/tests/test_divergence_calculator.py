@@ -82,33 +82,42 @@ class TestDualWindow:
 
 
 class TestShortData:
-    """20-59 rows should still produce a valid score."""
+    """21-60 rows fall back to single-window (20d) scoring."""
 
-    def test_30_rows_uses_shortened_60d_window(self, make_row):
+    def test_30_rows_falls_back_to_20d_only(self, make_row):
+        """With <61 rows there is no genuine 60d window; the old behavior
+        computed the '60d' window over the same span as the 20d one while
+        keeping its 0.6 weight and structural label."""
         rows = _make_divergence_rows(make_row, 30)
         result = calculate_divergence(rows)
         assert result["data_available"] is True
-        assert result["window_60d"]["lookback_days"] == 30
+        assert "window_60d" not in result
+        assert "20d_only" in result["windows_used"]
+        assert result["score"] == result["window_20d"]["score"]
 
-    def test_20_rows_minimum(self, make_row):
-        rows = _make_divergence_rows(make_row, 20)
+    def test_21_rows_minimum(self, make_row):
+        """A 20-day change needs 21 rows (fenceposts)."""
+        rows = _make_divergence_rows(make_row, 21)
         result = calculate_divergence(rows)
         assert result["data_available"] is True
+        assert result["window_20d"]["lookback_days"] == 20
 
-    def test_fewer_than_20_unavailable(self, make_row):
+    def test_fewer_than_21_unavailable(self, make_row):
         rows = _make_divergence_rows(make_row, 15)
         result = calculate_divergence(rows)
         assert result["data_available"] is False
 
-    def test_60d_lookback_days_correct(self, make_row):
-        """With 45 rows, 60d window lookback should be 45."""
+    def test_45_rows_still_20d_only(self, make_row):
         rows = _make_divergence_rows(make_row, 45)
         result = calculate_divergence(rows)
-        assert result["window_60d"]["lookback_days"] == 45
+        assert "window_60d" not in result
+        assert result["window_20d"]["lookback_days"] == 20
 
-    def test_20d_lookback_correct(self, make_row):
+    def test_dual_windows_with_full_history(self, make_row):
         rows = _make_divergence_rows(make_row, 80)
         result = calculate_divergence(rows)
+        assert result["windows_used"] == "60d+20d"
+        assert result["window_60d"]["lookback_days"] == 60
         assert result["window_20d"]["lookback_days"] == 20
 
 

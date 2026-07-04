@@ -4,21 +4,22 @@ I Component - Institutional Sponsorship Calculator (Full Implementation)
 
 Calculates CANSLIM 'I' component score based on institutional holder count and ownership percentage.
 
-O'Neil's Rule: "You need some of the big boys on your side. Look for stocks with increasing
-institutional sponsorship, but not too much. The sweet spot is 50-100 institutional holders
-with 30-60% ownership."
+O'Neil's actual I criteria: increasing institutional sponsorship in recent quarters, and
+sponsorship by at least a few top-performing funds. He gives no numeric holder-count band;
+the tiers below are THIS SKILL'S calibration against FMP 13F data, where real holder counts
+run from tens (micro caps) to 4,000-6,000+ (mega caps).
 
-Key Principles:
-- 50-100 holders: Enough interest, not overcrowded
-- 30-60% ownership: Strong backing without lock-up
-- <30%: Underowned (potential upside, but may lack institutional support)
-- >80%: Overcrowded (no buying power left, vulnerable to selling)
+Key Principles (this skill's calibration):
+- 300-2,000 holders: Established sponsorship with room for discovery
+- 30-70% ownership: Strong backing without saturation
+- <20% ownership: Underowned (may lack institutional support)
+- >85% ownership: Overcrowded (little buying power left, vulnerable to selling)
 - Superinvestors (Berkshire, Baupost, etc.): Quality signal
 
 Scoring:
-- 100 points: 50-100 holders + 30-60% ownership (O'Neil's sweet spot)
-- 90 points: Superinvestor present + good holder count
-- 80 points: 30-50 holders + 20-40% ownership OR 100-150 holders + 40-70% ownership
+- 100 points: 300-2,000 holders + 30-70% ownership (this skill's sweet spot)
+- 90 points: Superinvestor present + 100+ holders
+- 80 points: 100-300 holders + 20-60% ownership OR 2,000-3,500 holders + 40-80% ownership
 - 60 points: Acceptable but suboptimal ranges
 - 40 points: <20% or >80% ownership
 - 20 points: <10% or >90% ownership
@@ -262,20 +263,20 @@ def score_institutional_sponsorship(
     # Full scoring with ownership %
     base_score = 0
 
-    # O'Neil's Sweet Spot: 50-100 holders + 30-60% ownership
-    if 50 <= num_holders <= 100 and 30 <= ownership_pct <= 60:
+    # This skill's sweet spot: established sponsorship with room to grow
+    if 300 <= num_holders <= 2000 and 30 <= ownership_pct <= 70:
         base_score = 100
-    # Superinvestor present + good holder count
-    elif superinvestor_present and 30 <= num_holders <= 150:
+    # Superinvestor present + meaningful holder base
+    elif superinvestor_present and num_holders >= 100:
         base_score = 90
-    # Good ranges (slightly outside sweet spot)
-    elif (30 <= num_holders < 50 and 20 <= ownership_pct <= 40) or (
-        100 < num_holders <= 150 and 40 <= ownership_pct <= 70
+    # Good ranges (emerging sponsorship, or larger but not saturated)
+    elif (100 <= num_holders < 300 and 20 <= ownership_pct <= 60) or (
+        2000 < num_holders <= 3500 and 40 <= ownership_pct <= 80
     ):
         base_score = 80
     # Acceptable ranges
-    elif (20 <= num_holders < 30 and 20 <= ownership_pct <= 50) or (
-        50 <= num_holders <= 150 and 20 <= ownership_pct <= 70
+    elif (50 <= num_holders < 100 and 20 <= ownership_pct <= 50) or (
+        300 <= num_holders <= 3500 and 20 <= ownership_pct <= 80
     ):
         base_score = 60
     # Extreme ownership (check narrower range first)
@@ -313,14 +314,14 @@ def interpret_institutional_sponsorship(
         str: Interpretation string
     """
     # Holder count assessment
-    if 50 <= num_holders <= 100:
-        holder_msg = f"{num_holders} holders (O'Neil's sweet spot)"
-    elif 30 <= num_holders < 50:
-        holder_msg = f"{num_holders} holders (good, but could grow)"
-    elif num_holders > 100 and num_holders <= 150:
-        holder_msg = f"{num_holders} holders (getting crowded)"
-    elif num_holders > 150:
-        holder_msg = f"{num_holders} holders (overcrowded)"
+    if 300 <= num_holders <= 2000:
+        holder_msg = f"{num_holders} holders (established sponsorship, room to grow)"
+    elif 100 <= num_holders < 300:
+        holder_msg = f"{num_holders} holders (emerging sponsorship)"
+    elif num_holders > 2000 and num_holders <= 3500:
+        holder_msg = f"{num_holders} holders (widely held)"
+    elif num_holders > 3500:
+        holder_msg = f"{num_holders} holders (saturated mega-cap ownership)"
     else:
         holder_msg = f"{num_holders} holders (underowned)"
 

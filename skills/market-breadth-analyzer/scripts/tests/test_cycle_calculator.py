@@ -6,12 +6,17 @@ from calculators.cycle_calculator import calculate_cycle_position
 class TestDataAvailability:
     """Marker-not-found should yield data_available=False."""
 
-    def test_no_marker_returns_data_available_false(self, make_rows):
-        """120 rows with no peak/trough -> data_available False."""
+    def test_no_marker_is_neutral_but_available(self, make_rows):
+        """120 rows with no peak/trough -> neutral 50 with data_available True.
+
+        No-marker is a legitimate neutral reading, not missing data; excluding
+        the component would silently redistribute its 20% weight.
+        """
         rows = make_rows(120)
         result = calculate_cycle_position(rows)
-        assert result["data_available"] is False
+        assert result["data_available"] is True
         assert result["score"] == 50
+        assert result["latest_marker_type"] is None
 
     def test_marker_present_returns_data_available_true(self, make_rows):
         """A trough marker within lookback -> data_available True."""

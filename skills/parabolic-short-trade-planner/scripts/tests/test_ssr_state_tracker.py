@@ -55,6 +55,29 @@ class TestStatePersistence:
         assert today["ssr_carryover_from_prior_day"] is True
         assert today["uptick_rule_active"] is True
 
+    def test_carryover_across_weekend(self, tmp_path):
+        # SSR trips Friday 2026-05-01; Rule 201 restricts Monday 2026-05-04 too.
+        friday_state = evaluate_ssr(prior_regular_close=100.0, current_price=85.0)
+        save_state(tmp_path, "XYZ", "2026-05-01", friday_state)
+        prior = load_prior_day_state(tmp_path, "XYZ", "2026-05-04")
+        assert prior is not None
+        monday = evaluate_ssr(prior_regular_close=85.0, current_price=86.0, prior_day_state=prior)
+        assert monday["ssr_carryover_from_prior_day"] is True
+        assert monday["uptick_rule_active"] is True
+
+
+class TestSessionLowLatch:
+    def test_session_low_triggers_when_current_price_recovered(self):
+        # Fell 12% intraday, bounced to -8% by evaluation time: SSR latched.
+        out = evaluate_ssr(prior_regular_close=100.0, current_price=92.0, session_low=88.0)
+        assert out["ssr_triggered_today"] is True
+        assert out["uptick_rule_active"] is True
+
+    def test_current_price_alone_misses_recovered_trigger(self):
+        # Without session_low the recovered print alone does not trigger.
+        out = evaluate_ssr(prior_regular_close=100.0, current_price=92.0)
+        assert out["ssr_triggered_today"] is False
+
 
 class TestThresholdConstant:
     def test_constant_is_10(self):

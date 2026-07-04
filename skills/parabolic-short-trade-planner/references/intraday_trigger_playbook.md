@@ -81,7 +81,7 @@ plan_id template:   <TICKER>-<YYYYMMDD>-VWF
 trigger_type:       vwap_fail
 condition (ja):     First crack 後 VWAP retest で 5min 終値拒否 + lower-high 下抜け
 entry_hint:         lower_high_low - 0.05
-stop_hint:          vwap_reclaim_5min_close
+stop_hint:          vwap_retest_bar_high
 ```
 
 **Phase 3 evaluator** (FSM):
@@ -106,7 +106,11 @@ State machine has six states:
 - **Time zone**: all timestamps `America/New_York`.
 - **Halt handling**: bars during halt are skipped; the FSM resumes
   from its last state when trading resumes.
-- **Bar close vs touch**: triggers fire on bar close, not intra-bar.
-  Reduces wick noise.
+- **Bar close vs touch**: trigger semantics differ per playbook. ORL
+  fires on a 5-minute **close** below the opening-range low (reduces
+  wick noise at a level the whole market watches). First-red and
+  VWAP-fail fire **intra-bar** on a break of the reference bar's low
+  (the follow-through is the signal; waiting for the close gives up
+  too much of the move). Invalidations always evaluate on bar close.
 - **No re-entry**: once a plan is `triggered` or `invalidated`, the
   FSM does not re-arm for the day.

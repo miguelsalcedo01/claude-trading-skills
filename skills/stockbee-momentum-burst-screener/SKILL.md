@@ -58,7 +58,7 @@ python3 skills/stockbee-momentum-burst-screener/scripts/screen_momentum_burst.py
 The script detects these trigger families:
 
 - **4% Breakout:** `close / previous_close >= 1.04`, volume above previous day, and volume above the liquidity floor
-- **Dollar Breakout:** `close - open >= 0.90`, volume above the liquidity floor
+- **Dollar Breakout:** `close - prev_close >= 0.90` (Stockbee's C - C1), volume expanded vs prior day and above the liquidity floor
 - **Range Expansion:** current daily range exceeds the prior three daily ranges while the prior day was not already extended
 
 It then scores setup quality using:

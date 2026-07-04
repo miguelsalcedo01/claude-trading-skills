@@ -66,10 +66,21 @@ def calculate_market_direction(
         close_prices = [day.get("close") for day in sp500_prices if day.get("close")]
         if len(close_prices) >= 50:
             sp500_ema_50 = calculate_ema(close_prices, period=50)
-    else:
-        # Estimate: Assume EMA is ~2% below current price in uptrend, ~2% above in downtrend
-        # This is a simplified fallback when historical data unavailable
-        sp500_ema_50 = sp500_price * 0.98  # Conservative estimate
+    if sp500_ema_50 is None:
+        # No historical data — refuse to guess. The old price*0.98 fallback
+        # manufactured a permanent +2% distance, i.e. the MOST bullish reading
+        # in the one component whose job is bear-market protection.
+        return {
+            "score": 50,
+            "trend": "unknown",
+            "sp500_price": sp500_price,
+            "sp500_ema_50": None,
+            "distance_from_ema_pct": 0.0,
+            "vix_level": vix_quote.get("price") if vix_quote else None,
+            "interpretation": "Market trend unknown (insufficient data); treat M as neutral",
+            "warning": "M component degraded to neutral due to missing S&P 500 history",
+            "error": "S&P 500 historical prices unavailable - cannot compute 50-day EMA",
+        }
 
     # Calculate distance from EMA
     distance_from_ema_pct = ((sp500_price / sp500_ema_50) - 1) * 100 if sp500_ema_50 else 0

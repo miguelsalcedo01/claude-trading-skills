@@ -282,6 +282,8 @@ def normalize_bars(raw_bars: list[dict[str, Any]], limit: int | None = None) -> 
             continue
         if bar.high < bar.low:
             continue
+        if not (bar.low <= bar.open <= bar.high and bar.low <= bar.close <= bar.high):
+            continue
         bars.append(bar)
 
     bars.sort(key=lambda b: b.date, reverse=True)
@@ -408,7 +410,7 @@ def close_location_pct(bar: Bar) -> float:
 def up_streak_before_trigger(bars: list[Bar], max_days: int = 5) -> int:
     """Count consecutive up closes immediately before the latest trigger bar."""
     streak = 0
-    for idx in range(1, min(len(bars) - 1, max_days) + 1):
+    for idx in range(1, min(len(bars) - 2, max_days) + 1):
         if bars[idx].close > bars[idx + 1].close:
             streak += 1
         else:
@@ -487,7 +489,10 @@ def detect_triggers(bars: list[Bar], args: argparse.Namespace) -> TriggerProfile
     prev = bars[1]
     prior_2 = bars[2]
     day_gain_pct = pct_change(latest.close, prev.close)
-    dollar_gain = latest.close - latest.open
+    # Stockbee $ breakout is close-over-PRIOR-close (C - C1), not close-over-open:
+    # a gap-up that closes flat from the open is still a burst, and an
+    # intraday-only push after a gap-down is not.
+    dollar_gain = latest.close - prev.close
     current_range = latest.high - latest.low
     current_range_pct = (current_range / latest.close) * 100 if latest.close > 0 else 0.0
     prior_ranges = [b.high - b.low for b in bars[1:4]]
@@ -503,7 +508,7 @@ def detect_triggers(bars: list[Bar], args: argparse.Namespace) -> TriggerProfile
 
     if day_gain_pct >= args.four_pct_threshold and volume_expanded and volume_floor_ok:
         trigger_tags.append("4pct_breakout")
-    if dollar_gain >= args.dollar_threshold and volume_floor_ok:
+    if dollar_gain >= args.dollar_threshold and volume_expanded and volume_floor_ok:
         trigger_tags.append("dollar_breakout")
     if (
         current_range > prior_range_max
@@ -555,9 +560,9 @@ def volume_score(profile: TriggerProfile) -> int:
         return 12
     if best_ratio >= 1.5:
         return 9
-    if best_ratio >= 1.0:
+    if best_ratio >= 1.2:
         return 6
-    return 0
+    return 0  # volume merely equal to the baseline is not expansion
 
 
 def setup_score(base: BaseProfile, prev_bar: Bar, args: argparse.Namespace) -> int:
@@ -628,12 +633,18 @@ def failure_filter_score(
     prior_up_streak: int,
     recent_breakdown: bool,
     args: argparse.Namespace,
+    month_runup_pct: float = 0.0,
 ) -> tuple[int, list[str]]:
     score = 10
     reasons: list[str] = []
     if prior_up_streak >= 3:
         score -= 4
         reasons.append("prior_3day_runup")
+    if month_runup_pct > args.max_month_runup_pct:
+        # Stockbee avoids already-extended stocks; a 3-day streak check alone
+        # misses a name up 30%+ in a month that paused briefly before popping.
+        score -= 4
+        reasons.append("extended_1month")
     if recent_breakdown:
         score -= 4
         reasons.append("recent_4pct_breakdown")
@@ -699,6 +710,9 @@ def analyze_symbol(symbol: str, bars: list[Bar], args: argparse.Namespace) -> di
         reject_reasons.append("below_min_price")
     if latest.volume < args.min_volume:
         reject_reasons.append("below_min_volume")
+    avg_dollar_vol_20 = average([b.close * b.volume for b in bars[1:21]])
+    if avg_dollar_vol_20 < args.min_dollar_volume:
+        reject_reasons.append("below_min_dollar_volume")
 
     profile = detect_triggers(bars, args)
     executable_tags = [t for t in profile.trigger_tags if t != "9m_volume"]
@@ -713,6 +727,7 @@ def analyze_symbol(symbol: str, bars: list[Bar], args: argparse.Namespace) -> di
         max_prior_avg_range_pct=args.max_prior_avg_range_pct,
     )
     prior_up_streak = up_streak_before_trigger(bars)
+    month_runup_pct = pct_change(latest.close, bars[21].close) if len(bars) > 21 else 0.0
     recent_breakdown = has_recent_breakdown(
         bars,
         lookback_days=args.recent_breakdown_lookback,
@@ -737,7 +752,7 @@ def analyze_symbol(symbol: str, bars: list[Bar], args: argparse.Namespace) -> di
         "market_gate": market_gate_score(args.market_gate),
     }
     components["failure_filters"], soft_failure_tags = failure_filter_score(
-        profile, base, prior_up_streak, recent_breakdown, args
+        profile, base, prior_up_streak, recent_breakdown, args, month_runup_pct
     )
     composite_score = int(sum(components.values()))
     hard_rejected = bool(reject_reasons)
@@ -818,6 +833,18 @@ def parse_arguments() -> argparse.Namespace:
     # Liquidity / price gates
     parser.add_argument("--min-price", type=float, default=5.0, help="Minimum latest close")
     parser.add_argument("--min-volume", type=int, default=100_000, help="Minimum latest volume")
+    parser.add_argument(
+        "--min-dollar-volume",
+        type=float,
+        default=10_000_000,
+        help="Minimum 20-day average daily dollar volume (price x volume)",
+    )
+    parser.add_argument(
+        "--max-month-runup-pct",
+        type=float,
+        default=30.0,
+        help="Soft-penalize stocks already up more than this over ~21 sessions",
+    )
     parser.add_argument(
         "--min-market-cap", type=float, default=500_000_000, help="FMP universe market cap floor"
     )
@@ -978,7 +1005,8 @@ def generate_markdown_report(
     for row in results:
         counts[row.get("state", "UNKNOWN")] = counts.get(row.get("state", "UNKNOWN"), 0) + 1
 
-    actionable = [r for r in results if r.get("state") != "REJECTED"][:top]
+    non_rejected = [r for r in results if r.get("state") != "REJECTED"]
+    actionable = non_rejected[:top]
     rejected = [r for r in results if r.get("state") == "REJECTED"]
 
     lines = [
@@ -991,7 +1019,7 @@ def generate_markdown_report(
         "## Summary",
         "",
         f"- Symbols processed: {metadata['symbols_processed']}",
-        f"- Non-rejected candidates: {len(actionable)}",
+        f"- Non-rejected candidates: {len(non_rejected)} (showing top {len(actionable)})",
         f"- Rejected candidates: {len(rejected)}",
         "",
         "| State | Count |",

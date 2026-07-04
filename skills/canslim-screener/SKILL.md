@@ -23,7 +23,7 @@ This skill screens US stocks using William O'Neil's proven CANSLIM methodology, 
 - Interpretation bands: Exceptional+ (90+), Exceptional (80-89), Strong (70-79), Above Average (60-69)
 - Bear market protection (M component gating)
 
-**Phase 3.1 Component Weights (Original O'Neil weights):**
+**Phase 3.1 Component Weights (this skill's weights; O'Neil published none — CANSLIM is a pass/fail checklist):**
 - C (Current Earnings): 15%
 - A (Annual Growth): 20%
 - N (Newness): 15%

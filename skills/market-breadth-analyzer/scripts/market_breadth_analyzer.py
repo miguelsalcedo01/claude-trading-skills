@@ -261,10 +261,17 @@ def _compute_key_levels(rows, summary):
         return {}
 
     latest = rows[-1]
-    latest["Breadth_Index_8MA"]
+    ma8 = latest["Breadth_Index_8MA"]
     ma200 = latest["Breadth_Index_200MA"]
 
     levels = {}
+
+    # Current 8MA reading (the evidently intended "current level" entry that
+    # was previously computed and discarded)
+    levels["Current 8MA"] = {
+        "value": f"{ma8:.4f}",
+        "significance": "Latest 8-day EMA of the breadth index; all thresholds below are read against this value.",
+    }
 
     # 200MA crossover level
     levels["200MA Level"] = {

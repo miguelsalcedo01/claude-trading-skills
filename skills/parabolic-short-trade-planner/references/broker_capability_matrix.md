@@ -8,7 +8,7 @@ it maps onto this skill's `BrokerShortInventoryAdapter` contract.
 | `shortable` | ✅ (`/v2/assets/{symbol}.shortable`) | ✅ via TWS API | n/a |
 | `easy_to_borrow` | ✅ (`easy_to_borrow`) | ⚠️ inferred from rate sheet | n/a |
 | `can_open_new_short` | shortable AND ETB | locate-dependent | always False (default-deny) |
-| `borrow_fee_apr` | 0.0 for ETB; None for HTB | quoted per-symbol | None |
+| `borrow_fee_apr` | None (fee varies daily; ETB is not free borrow) | quoted per-symbol | None |
 | `borrow_fee_manual_check_required` | True only for HTB | False (rate is quoted) | always True |
 | `manual_locate_required` | always True (broker confirms) | False after locate succeeds | always True |
 | New short on HTB? | ❌ rejected at submit | ✅ after locate | n/a |

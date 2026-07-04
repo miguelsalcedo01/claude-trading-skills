@@ -13,7 +13,7 @@ Contract:
         "shortable": bool,
         "easy_to_borrow": bool,
         "can_open_new_short": bool,           # alias for shortable AND ETB
-        "borrow_fee_apr": float | None,       # 0.0 for ETB on Alpaca; None
+        "borrow_fee_apr": float | None,       # None unless quoted; ETB is NOT free
                                               # if the broker can't quote
         "borrow_fee_manual_check_required": bool,
         "manual_locate_required": bool,       # always True for Alpaca short

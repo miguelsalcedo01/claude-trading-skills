@@ -8,7 +8,7 @@ in `state_caps.py` instead.
 
 | Rule | safe_largecap | classic_qm | Source |
 |---|---|---|---|
-| Earnings within N trading days | ≤ 2 days → reject | ≤ 2 days → reject | FMP earnings calendar |
+| Earnings within N calendar days | ≤ 2 days → reject | ≤ 2 days → reject | FMP earnings calendar |
 | Market cap floor | < $2B → reject | < $300M → reject | FMP profile `mktCap` |
 | 20-day average dollar volume | < $20M → reject | < $5M → reject | Computed from EOD bars |
 | Latest close | < $5.00 → reject | < $5.00 → reject | EOD close |

@@ -342,7 +342,9 @@ ratio = avg_up_volume / avg_down_volume
 
 ### I - Institutional Sponsorship (10% Weight)
 
-**O'Neil's Rule**: "You need some of the big boys on your side. Look for stocks with increasing institutional sponsorship, but not too much. The sweet spot is 50-100 institutional holders with 30-60% ownership."
+**O'Neil's Rule** (paraphrased — he gives no numeric holder-count band): look for *increasing* institutional sponsorship over recent quarters, and sponsorship by at least a few top-performing funds. Avoid names that are either institution-neglected or already over-owned.
+
+> **Calibration note**: the numeric tiers below are this skill's calibration against FMP 13F data, where real holder counts run from tens (micro caps) to 4,000-6,000+ (mega caps). Any framework quoting a "50-100 holders" sweet spot is miscalibrated by an order of magnitude for mid/large caps.
 
 #### Why It Matters
 
@@ -356,14 +358,14 @@ Institutional investors (mutual funds, pension funds, hedge funds) have research
 
 #### Quantitative Criteria
 
-**Holder Count**:
-- **Sweet Spot**: 50-100 institutional holders
-- **Good**: 30-50 holders (building interest)
-- **Acceptable**: 100-150 holders (getting crowded)
-- **Avoid**: < 30 holders (underowned) or > 150 holders (overcrowded)
+**Holder Count** (this skill's calibration):
+- **Sweet Spot**: 300-2,000 institutional holders
+- **Good**: 100-300 holders (emerging sponsorship)
+- **Acceptable**: 2,000-3,500 holders (widely held)
+- **Avoid**: < 50 holders (underowned) or > 3,500 holders (saturated mega-cap ownership)
 
 **Ownership Percentage**:
-- **Ideal Range**: 30-60% institutional ownership
+- **Ideal Range**: 30-70% institutional ownership
 - **Acceptable**: 20-30% or 60-80%
 - **Caution**: < 20% (neglected) or > 80% (saturated)
 
@@ -409,7 +411,7 @@ if superinvestor_present and score < 100:
 #### Interpretation
 
 **100 Points (Ideal)**:
-- 50-100 holders, 30-60% ownership
+- 300-2,000 holders, 30-70% ownership
 - **Action**: Perfect institutional backing - proceed with confidence
 
 **90 Points (Quality Signal)**:
@@ -430,9 +432,11 @@ if superinvestor_present and score < 100:
 
 #### Historical Examples
 
-- **NVDA (2023 Q2)**: 74 holders, 44% ownership → 240% gain YTD
-- **META (2023 Q1)**: 68 holders, 51% ownership → 194% recovery
-- **TSLA (2020)**: Increased from 35 to 89 holders during 700% run
+Real 13F holder counts for mega-caps number in the thousands (NVDA had roughly
+4,000-5,000 institutional holders in 2023, not double digits). The actionable
+O'Neil signal is the *direction*: quarter-over-quarter increases in sponsor
+count during a run (e.g., TSLA's sponsor count rose sharply through its
+2020 advance) matter more than any absolute level.
 - **AAPL (2019)**: Berkshire Hathaway holding (superinvestor) → confidence signal
 
 **Warning**: Stocks with > 150 holders and > 80% ownership often underperform - institutions have already bought, creating selling pressure during any weakness.

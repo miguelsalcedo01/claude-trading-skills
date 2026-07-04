@@ -21,6 +21,8 @@ def _args(**overrides):
     base = dict(
         min_price=5.0,
         min_volume=100_000,
+        min_dollar_volume=10_000_000,
+        max_month_runup_pct=30.0,
         four_pct_threshold=4.0,
         dollar_threshold=0.90,
         nine_million_volume=9_000_000,
@@ -43,7 +45,7 @@ def _good_bars():
     rows = [
         {
             "date": "2026-06-20",
-            "open": 100.0,
+            "open": 101.2,
             "high": 105.0,
             "low": 101.0,
             "close": 104.5,

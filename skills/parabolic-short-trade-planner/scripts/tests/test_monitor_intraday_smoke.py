@@ -52,7 +52,7 @@ class TestSmokePipeline:
         orl_plan = next(p for p in report["monitored_plans"] if p["plan_id"].endswith("ORL5"))
         assert orl_plan["state"] == "triggered"
         assert orl_plan["evaluation_status"] == "evaluated"
-        assert orl_plan["entry_actual"] == 148.45
+        assert orl_plan["entry_actual"] == 148.95  # orl_low 149.00 - 0.05 offset (matches plan hint)
         assert orl_plan["stop_actual"] == 150.35
         # size_recipe_resolved must be filled with concrete shares.
         sr = orl_plan["size_recipe_resolved"]

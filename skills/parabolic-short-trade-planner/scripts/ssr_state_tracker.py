@@ -31,21 +31,36 @@ def evaluate_ssr(
     *,
     prior_regular_close: float,
     current_price: float,
+    session_low: float | None = None,
     prior_day_state: dict | None = None,
 ) -> dict:
     """Compute the SSR state for a single symbol on the trading day.
 
+    Rule 201 is a *latching* trigger: it fires when the **intraday low** of the
+    regular session touches -10% from the prior regular-session close, and it
+    stays on for the rest of the day even if price recovers. Callers should
+    therefore pass ``session_low`` whenever regular-session bars are available;
+    ``current_price`` alone can miss a trigger that already happened earlier in
+    the session. Note that SSR is determined from regular-session consolidated
+    prices — a premarket-only -10% print does not itself trigger SSR, but this
+    planner treats it as triggered anyway (conservative for a short planner).
+
     Args:
         prior_regular_close: yesterday's 4:00 PM ET close (regular session).
         current_price: latest known intraday or premarket print.
-        prior_day_state: yesterday's stored SSR state, if any. When
-            ``ssr_triggered_today`` was True yesterday, today inherits
-            ``ssr_carryover_from_prior_day=True`` per Rule 201.
+        session_low: lowest regular-session print so far today, if known.
+            The trigger latches off ``min(session_low, current_price)``.
+        prior_day_state: prior trading day's stored SSR state, if any. When
+            ``ssr_triggered_today`` was True on the prior trading day, today
+            inherits ``ssr_carryover_from_prior_day=True`` per Rule 201.
     """
     if prior_regular_close <= 0:
         raise ValueError(f"prior_regular_close must be positive: {prior_regular_close}")
 
-    drop_pct = (prior_regular_close - current_price) / prior_regular_close * 100.0
+    low_print = current_price
+    if session_low is not None and session_low < low_print:
+        low_print = session_low
+    drop_pct = (prior_regular_close - low_print) / prior_regular_close * 100.0
     triggered_today = drop_pct >= SSR_DROP_THRESHOLD_PCT
 
     carryover = bool(prior_day_state and prior_day_state.get("ssr_triggered_today"))
@@ -66,24 +81,29 @@ def state_path(state_dir: str | Path, ticker: str, as_of: str) -> Path:
 
 
 def load_prior_day_state(state_dir: str | Path, ticker: str, as_of: str) -> dict | None:
-    """Read yesterday's state file (if any) so today can compute carryover.
+    """Read the prior *trading day's* state file so today can compute carryover.
 
-    Calendar-day arithmetic is fine here — Rule 201 carryover is
-    "next trading day" but a strict trading-calendar lookup is overkill
-    for a planner that runs daily. If yesterday is a weekend, no file
-    exists and we return ``None``.
+    Rule 201 carryover is "remainder of day + next trading day", so a stock
+    that trips SSR on Friday is still restricted on Monday. We walk back up to
+    five calendar days (covering weekends and long holiday weekends) and use
+    the most recent state file found. Only trading days produce state files,
+    so the first hit is the prior trading day. Market holidays without a
+    stored file simply yield ``None`` (no carryover signal available).
     """
     try:
-        prior = (date.fromisoformat(as_of) - timedelta(days=1)).isoformat()
+        as_of_date = date.fromisoformat(as_of)
     except (TypeError, ValueError):
         return None
-    p = state_path(state_dir, ticker, prior)
-    if not p.exists():
-        return None
-    try:
-        return json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
+    for days_back in range(1, 6):
+        prior = (as_of_date - timedelta(days=days_back)).isoformat()
+        p = state_path(state_dir, ticker, prior)
+        if not p.exists():
+            continue
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return None
+    return None
 
 
 def save_state(state_dir: str | Path, ticker: str, as_of: str, state: dict) -> Path:

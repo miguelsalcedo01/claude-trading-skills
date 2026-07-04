@@ -129,7 +129,10 @@ def evaluate(
             if bar["c"] < out["orl_low"] and bar["v"] >= ORL_VOLUME_MULTIPLIER * out["orl_volume"]:
                 out["state"] = "triggered"
                 out["triggered_at"] = bar["ts_et"]
-                out["entry_actual"] = round(bar["c"] - ENTRY_OFFSET_BELOW_ORL, 4)
+                # Entry matches the plan hint: ORL low minus the offset — NOT the
+                # trigger bar's close, which can sit far below ORL on a flush bar
+                # and would misprice the resolved share count.
+                out["entry_actual"] = round(out["orl_low"] - ENTRY_OFFSET_BELOW_ORL, 4)
                 out["stop_actual"] = round(out["session_high"] + stop_buffer_atr * atr_14, 4)
             # Pre-trigger reclaims do NOT invalidate — plan stays armed.
             continue

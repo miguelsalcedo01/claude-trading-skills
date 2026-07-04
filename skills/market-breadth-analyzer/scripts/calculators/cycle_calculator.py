@@ -7,21 +7,28 @@ Determines where we are in the breadth cycle relative to recent peaks and trough
 Input: Is_Peak, Is_Trough, Is_Trough_8MA_Below_04, Breadth_Index_8MA (last 120 days)
 
 Scoring (100 = healthy):
-  Latest marker = TROUGH:
-    <= 20 days & 8MA rising       -> 85 (early recovery)
-    <= 20 days & 8MA flat/falling -> 30 (failed reversal)
-    21-60 days & 8MA rising       -> 75 (sustained recovery)
-    > 60 days & 8MA rising        -> 65 (mature recovery)
+  Latest marker = TROUGH (rising means strictly rising; flat counts as
+  not-rising, i.e. a stalled recovery):
+    <= 20 days & 8MA rising        -> 85 (early recovery)
+    <= 20 days & 8MA flat/falling  -> 30 (failed reversal)
+    21-60 days & 8MA rising        -> 75 (sustained recovery)
+    21-60 days & 8MA flat/falling  -> 35 (stalled recovery)
+    > 60 days & 8MA rising         -> 65 (mature recovery)
+    > 60 days & 8MA flat/falling   -> 40 (weakening recovery)
 
-  Latest marker = PEAK:
-    <= 20 days & 8MA falling      -> 20 (post-peak decline)
-    <= 20 days & 8MA flat/rising  -> 60 (high-level consolidation)
-    21-60 days & 8MA falling      -> 15 (sustained decline)
-    > 60 days & 8MA falling       -> 10 (prolonged decline)
-    > 60 days & 8MA rising        -> 50 (possible bottom formation)
+  Latest marker = PEAK (flat counts as rising, i.e. high-level consolidation):
+    <= 20 days & 8MA flat/rising   -> 60 (high-level consolidation)
+    <= 20 days & 8MA falling       -> 20 (post-peak decline)
+    21-60 days & 8MA flat/rising   -> 45 (recovery attempt)
+    21-60 days & 8MA falling       -> 15 (sustained decline)
+    > 60 days & 8MA flat/rising    -> 50 (possible bottom formation)
+    > 60 days & 8MA falling        -> 10 (prolonged decline)
 
-  Extreme Trough Bonus: Is_Trough_8MA_Below_04 == True -> +10
-  No marker within 120 days -> 50 (neutral)
+  Extreme Trough Bonus: Is_Trough_8MA_Below_04 == True AND within 60 days
+  of the trough -> +10 (contrarian entry signal decays; it does not apply
+  indefinitely after the trough)
+  No marker within 120 days -> 50 (neutral, data_available stays True so
+  the component's weight is NOT redistributed)
 """
 
 from typing import Optional
@@ -53,9 +60,15 @@ def calculate_cycle_position(rows: list[dict]) -> dict:
     # Find latest peak or trough marker
     marker_type, marker_idx, days_since = _find_latest_marker(recent)
 
-    # Determine 8MA trend (rising/falling) over last 5 days
+    # Determine 8MA trend (rising/flat/falling) over last 5 days
     if len(rows) >= 6:
-        ma8_trend = "rising" if current_8ma > rows[-6]["Breadth_Index_8MA"] else "falling"
+        ma8_5d_ago = rows[-6]["Breadth_Index_8MA"]
+        if current_8ma > ma8_5d_ago:
+            ma8_trend = "rising"
+        elif current_8ma < ma8_5d_ago:
+            ma8_trend = "falling"
+        else:
+            ma8_trend = "flat"
     else:
         ma8_trend = "unknown"
 
@@ -70,12 +83,12 @@ def calculate_cycle_position(rows: list[dict]) -> dict:
 
     signal = _generate_signal(marker_type, days_since, ma8_trend, score)
 
-    marker_found = marker_type is not None
-
     return {
         "score": score,
         "signal": signal,
-        "data_available": marker_found,
+        # No-marker is a legitimate neutral reading (50), not missing data:
+        # excluding the component would silently redistribute its 20% weight.
+        "data_available": True,
         "latest_marker_type": marker_type,
         "days_since_marker": days_since,
         "ma8_trend": ma8_trend,
@@ -113,27 +126,32 @@ def _calculate_score(
     if marker_type is None or days_since is None:
         return 50  # Neutral when no marker found
 
-    rising = ma8_trend == "rising"
+    # Flat semantics differ by marker: after a trough, flat is a stalled
+    # recovery (not rising); after a peak, flat is high-level consolidation
+    # (counts with rising).
+    rising_for_trough = ma8_trend == "rising"
+    rising_for_peak = ma8_trend in ("rising", "flat")
 
     if marker_type == "TROUGH":
         if days_since <= 20:
-            base = 85 if rising else 30
+            base = 85 if rising_for_trough else 30
         elif days_since <= 60:
-            base = 75 if rising else 35
+            base = 75 if rising_for_trough else 35
         else:
-            base = 65 if rising else 40
+            base = 65 if rising_for_trough else 40
 
-        # Extreme trough bonus (contrarian buy signal)
-        if extreme_trough:
+        # Extreme trough bonus (contrarian buy signal) decays: only within
+        # 60 days of the trough, not indefinitely.
+        if extreme_trough and days_since <= 60:
             base += 10
 
     elif marker_type == "PEAK":
         if days_since <= 20:
-            base = 60 if rising else 20
+            base = 60 if rising_for_peak else 20
         elif days_since <= 60:
-            base = 45 if rising else 15
+            base = 45 if rising_for_peak else 15
         else:
-            base = 50 if rising else 10
+            base = 50 if rising_for_peak else 10
 
     else:
         base = 50

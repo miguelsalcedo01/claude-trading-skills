@@ -120,6 +120,12 @@ This means the long-term trend is declining AND the short-term breadth has falle
 
 Composite score = 60d_score x 0.6 + 20d_score x 0.4
 
+With fewer than ~61 rows of history there is no genuine 60-day window, so
+scoring falls back to the 20-day window alone (`windows_used: "20d_only"`)
+instead of silently relabeling the short span as structural. The headline
+signal is generated from the WORST of the two windows so a 20d early
+warning cannot hide behind a healthy 60d label.
+
 **Early Warning flag:** When the 20-day window shows bearish divergence (score <= 25) while the 60-day window is still healthy (score >= 50), an Early Warning is triggered. This signals that short-term breadth deterioration has begun before it becomes visible in the structural window.
 
 **Near-flat classification:** When both S&P 500 change and breadth change are below noise thresholds (|S&P %| < 0.5 and |breadth change| < 0.01), the window is classified as "Near-flat (insufficient movement)" with a neutral score of 50. This prevents misclassification of trivial movements as divergence or alignment signals.
@@ -133,7 +139,7 @@ Composite score = 60d_score x 0.6 + 20d_score x 0.4
 
 ### Weight Redistribution
 
-When a component has `data_available: False` (e.g., insufficient rows for divergence analysis), its weight is excluded and the remaining weights are proportionally redistributed:
+When a component has `data_available: False` (e.g., insufficient rows for divergence analysis), its weight is excluded and the remaining weights are proportionally redistributed. Note: C3 (cycle position) with no peak/trough marker in 120 days reports a legitimate *neutral 50* with `data_available: True` — a long steady trend is a reading, not missing data, so its 20% weight is NOT redistributed:
 
 ```
 effective_weight[i] = base_weight[i] / sum(base_weight[j] for all available j)

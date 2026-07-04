@@ -93,7 +93,7 @@ class AlpacaInventoryAdapter(BrokerShortInventoryAdapter):
             "shortable": shortable,
             "easy_to_borrow": etb,
             "can_open_new_short": can_open,
-            "borrow_fee_apr": 0.0 if etb else None,
+            "borrow_fee_apr": None,  # fee varies daily per symbol; ETB is NOT free borrow
             "borrow_fee_manual_check_required": not etb,
             "manual_locate_required": True,
             "source": "alpaca_v2_assets",

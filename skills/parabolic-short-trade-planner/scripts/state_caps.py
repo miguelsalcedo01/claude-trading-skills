@@ -8,7 +8,7 @@ Three signals:
   highs at fresh 52-week highs. Treated as a state cap (not a hard kill)
   so A/B candidates remain visible, but Phase 2 forces
   ``trade_allowed_without_manual=False`` via ``manual_reasons`` (blocking).
-- ``too_early_to_short``: today closed in the top 80 % of its range with
+- ``too_early_to_short``: today closed in the top 20 % of its range (range position >= 0.80) with
   expanding volume. Advisory only — Phase 2 keeps the plan but flags
   ``wait_for_trigger=True`` on every entry.
 - ``wait_for_first_crack``: pre-market is gapping up another 5 %+. Phase

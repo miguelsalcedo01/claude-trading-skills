@@ -9,8 +9,9 @@ Captures three ideas Qullamaggie flags as "exhaustion":
   setup.
 - ``acceleration_ratio``: average daily return over the last 3 sessions
   divided by the average daily return over the last 10 sessions. Values
-  > 1.5 mean the move is *accelerating* — the curve is bending up, not
-  just trending.
+  > 1.0 mean the move is *accelerating* — the curve is bending up, not
+  just trending. The scorer credits the ratio linearly from 1.0 (no
+  acceleration, zero credit) to 2.0 (full credit).
 """
 
 from __future__ import annotations

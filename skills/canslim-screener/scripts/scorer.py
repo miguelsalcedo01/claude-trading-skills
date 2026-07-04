@@ -5,7 +5,7 @@ CANSLIM Composite Scoring Engine - Phase 3 (Full CANSLIM)
 Combines individual component scores into weighted composite score.
 Supports Phase 1 (4 components), Phase 2 (6 components), and Phase 3 (7 components).
 
-Phase 3 Weights (Full CANSLIM - Original O'Neil weights):
+Phase 3 Weights (Full CANSLIM - this skill's weights; O'Neil published none — CANSLIM is a pass/fail checklist):
 - C (Current Earnings): 15%
 - A (Annual Growth): 20%
 - N (Newness): 15%
@@ -43,7 +43,7 @@ WEIGHTS_PHASE2 = {
     "M": 0.06,  # Market Direction (5% / 0.80 = 0.0625 ≈ 0.06)
 }
 
-# Phase 3 component weights (7 components, FULL CANSLIM - Original O'Neil weights)
+# Phase 3 component weights (7 components, FULL CANSLIM - this skill's weights; O'Neil published none — CANSLIM is a pass/fail checklist)
 WEIGHTS_PHASE3 = {
     "C": 0.15,  # Current Earnings - 15%
     "A": 0.20,  # Annual Growth - 20%

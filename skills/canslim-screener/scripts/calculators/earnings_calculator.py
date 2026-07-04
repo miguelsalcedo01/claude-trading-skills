@@ -249,7 +249,7 @@ def detect_earnings_acceleration(income_statements: list[dict]) -> dict:
 
     # Most recent quarter vs year-ago
     recent_eps = income_statements[0].get("eps", 0)
-    recent_year_ago_eps = income_statements[4].get("eps", 0.01)
+    recent_year_ago_eps = income_statements[4].get("eps")
     recent_growth = (
         ((recent_eps - recent_year_ago_eps) / abs(recent_year_ago_eps)) * 100
         if recent_year_ago_eps
@@ -258,7 +258,7 @@ def detect_earnings_acceleration(income_statements: list[dict]) -> dict:
 
     # Prior quarter vs its year-ago
     prior_eps = income_statements[1].get("eps", 0)
-    prior_year_ago_eps = income_statements[5].get("eps", 0.01)
+    prior_year_ago_eps = income_statements[5].get("eps")
     prior_growth = (
         ((prior_eps - prior_year_ago_eps) / abs(prior_year_ago_eps)) * 100
         if prior_year_ago_eps

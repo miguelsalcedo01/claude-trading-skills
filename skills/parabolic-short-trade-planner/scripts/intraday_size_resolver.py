@@ -70,4 +70,8 @@ def resolve_size_recipe(
         "shares_formula": size_recipe["shares_formula"],
         "shares_actual": shares,
         "risk_at_trigger_usd": risk_at_trigger_usd,
+        "risk_caveat": (
+            "planned risk, not maximum loss — LULD halts, gaps and squeezes "
+            "can realize 2-5x this figure on parabolic shorts"
+        ),
     }

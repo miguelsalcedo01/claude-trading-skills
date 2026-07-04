@@ -40,7 +40,8 @@ def calculate_annual_growth(income_statements: list[dict]) -> dict:
     # Validate input
     if not income_statements or len(income_statements) < 4:
         return {
-            "score": 50,  # Default for insufficient data (neutral)
+            "score": 40,  # Below the A pass threshold: unverifiable growth must not auto-pass
+            "insufficient_data": True,
             "error": "Insufficient annual data (need at least 4 years for 3-year CAGR)",
             "eps_cagr_3yr": None,
             "revenue_cagr_3yr": None,

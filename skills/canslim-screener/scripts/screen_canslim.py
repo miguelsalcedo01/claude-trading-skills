@@ -296,23 +296,23 @@ def analyze_stock(
         # Calculate composite score (Phase 3: 7 components - FULL CANSLIM)
         composite = calculate_composite_score_phase3(
             c_score=c_result.get("score", 0),
-            a_score=a_result.get("score", 50),
+            a_score=a_result.get("score", 40),
             n_score=n_result.get("score", 0),
             s_score=s_result.get("score", 0),
             l_score=l_result.get("score", 0),
             i_score=i_result.get("score", 0),
-            m_score=m_result.get("score", 50),
+            m_score=m_result.get("score", 40),
         )
 
         # Check minimum thresholds (Phase 3)
         threshold_check = check_minimum_thresholds_phase3(
             c_score=c_result.get("score", 0),
-            a_score=a_result.get("score", 50),
+            a_score=a_result.get("score", 40),
             n_score=n_result.get("score", 0),
             s_score=s_result.get("score", 0),
             l_score=l_result.get("score", 0),
             i_score=i_result.get("score", 0),
-            m_score=m_result.get("score", 50),
+            m_score=m_result.get("score", 40),
         )
 
         print(f"✓ Score: {composite['composite_score']:.1f} ({composite['rating']})")

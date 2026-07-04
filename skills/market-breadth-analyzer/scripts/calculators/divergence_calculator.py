@@ -10,10 +10,15 @@ Uses dual windows:
 
 Composite score = 60d_score * 0.6 + 20d_score * 0.4
 
+With fewer than 60 rows the 60d window would silently cover the same span
+as the 20d window while keeping its 0.6 weight and "structural" label, so
+in that case scoring falls back to the single 20d window and the output
+says so (`windows_used`).
+
 Early Warning: 20d bearish (<=25) while 60d healthy (>=50) flags
 an emerging short-term divergence before it becomes structural.
 
-Input: S&P500_Price, Breadth_Index_8MA (last 60+ days)
+Input: S&P500_Price, Breadth_Index_8MA (last 60+ days for dual windows)
 
 Scoring per window (100 = healthy):
   Both rising                        -> 70 (healthy rally)
@@ -36,7 +41,7 @@ def calculate_divergence(rows: list[dict]) -> dict:
     Returns:
         Dict with score, signal, windows, and component details.
     """
-    if not rows or len(rows) < 20:
+    if not rows or len(rows) < 21:
         return {
             "score": 50,
             "signal": "NO DATA: Insufficient data for divergence analysis",
@@ -45,42 +50,50 @@ def calculate_divergence(rows: list[dict]) -> dict:
 
     latest = rows[-1]
 
-    # Compute both windows
-    w60 = _compute_window(rows, 60)
     w20 = _compute_window(rows, 20)
-
-    # Composite score
-    score = round(w60["score"] * 0.6 + w20["score"] * 0.4, 1)
+    has_60d = len(rows) >= 61
+    if has_60d:
+        w60 = _compute_window(rows, 60)
+        score = round(w60["score"] * 0.6 + w20["score"] * 0.4, 1)
+        windows_used = "60d+20d"
+    else:
+        # Not enough history for a genuine structural window — score on the
+        # 20d window alone rather than double-counting it under a 60d label.
+        w60 = None
+        score = float(w20["score"])
+        windows_used = "20d_only (insufficient history for 60d window)"
     score = max(0, min(100, score))
 
     # Early Warning: short-term bearish divergence while long-term healthy
-    early_warning = w20["score"] <= 25 and w60["score"] >= 50
+    early_warning = bool(w60) and w20["score"] <= 25 and w60["score"] >= 50
 
-    # Signal uses the composite
-    signal = _generate_signal(w60["sp_pct"], w60["breadth_chg"], w60["div_type"], score)
+    # Headline reflects the window driving the composite: the WORST window,
+    # so a 20d early-warning cannot hide behind a healthy 60d label.
+    headline = w20 if (w60 is None or w20["score"] <= w60["score"]) else w60
+    signal = _generate_signal(
+        headline["sp_pct"],
+        headline["breadth_chg"],
+        headline["div_type"],
+        headline["lookback_days"],
+        early_warning,
+    )
 
-    return {
+    compat = w60 if w60 is not None else w20
+    result = {
         "score": score,
         "signal": signal,
         "data_available": True,
-        # Top-level backward compatibility (from 60d window)
-        "sp500_pct_change": round(w60["sp_pct"], 2),
-        "breadth_change": round(w60["breadth_chg"], 4),
+        "windows_used": windows_used,
+        # Top-level backward compatibility (structural window when available)
+        "sp500_pct_change": round(compat["sp_pct"], 2),
+        "breadth_change": round(compat["breadth_chg"], 4),
         "sp500_latest": latest["S&P500_Price"],
-        "sp500_past": w60["sp_past"],
+        "sp500_past": compat["sp_past"],
         "ma8_latest": latest["Breadth_Index_8MA"],
-        "ma8_past": w60["ma8_past"],
-        "lookback_days": w60["lookback_days"],
-        "divergence_type": w60["div_type"],
+        "ma8_past": compat["ma8_past"],
+        "lookback_days": compat["lookback_days"],
+        "divergence_type": compat["div_type"],
         "date": latest["Date"],
-        # New window details
-        "window_60d": {
-            "score": w60["score"],
-            "divergence_type": w60["div_type"],
-            "sp500_pct_change": round(w60["sp_pct"], 2),
-            "breadth_change": round(w60["breadth_chg"], 4),
-            "lookback_days": w60["lookback_days"],
-        },
         "window_20d": {
             "score": w20["score"],
             "divergence_type": w20["div_type"],
@@ -90,13 +103,27 @@ def calculate_divergence(rows: list[dict]) -> dict:
         },
         "early_warning": early_warning,
     }
+    if w60 is not None:
+        result["window_60d"] = {
+            "score": w60["score"],
+            "divergence_type": w60["div_type"],
+            "sp500_pct_change": round(w60["sp_pct"], 2),
+            "breadth_change": round(w60["breadth_chg"], 4),
+            "lookback_days": w60["lookback_days"],
+        }
+    return result
 
 
 def _compute_window(rows: list[dict], lookback: int) -> dict:
-    """Compute divergence metrics for a single lookback window."""
-    actual_lookback = min(lookback, len(rows))
+    """Compute divergence metrics for a single lookback window.
+
+    A "N-day window" spans N trading days of change, so the past reference
+    row is ``rows[-lookback - 1]`` (guarded against short input).
+    """
+    past_index = -min(lookback + 1, len(rows))
     latest = rows[-1]
-    past = rows[-actual_lookback]
+    past = rows[past_index]
+    actual_lookback = -past_index - 1
 
     sp_latest = latest["S&P500_Price"]
     sp_past = past["S&P500_Price"]
@@ -161,6 +188,15 @@ def _score_divergence(sp_pct: float, breadth_chg: float) -> tuple[int, str]:
     return 50, "Mixed signals"
 
 
-def _generate_signal(sp_pct: float, breadth_chg: float, div_type: str, score: int) -> str:
-    """Generate human-readable signal."""
-    return f"{div_type}: S&P {sp_pct:+.1f}%, Breadth 8MA {breadth_chg:+.3f} over 60d"
+def _generate_signal(
+    sp_pct: float,
+    breadth_chg: float,
+    div_type: str,
+    lookback_days: int,
+    early_warning: bool = False,
+) -> str:
+    """Generate human-readable signal from the window driving the composite."""
+    signal = f"{div_type}: S&P {sp_pct:+.1f}%, Breadth 8MA {breadth_chg:+.3f} over {lookback_days}d"
+    if early_warning:
+        signal += " [EARLY WARNING: 20d bearish divergence while 60d still healthy]"
+    return signal

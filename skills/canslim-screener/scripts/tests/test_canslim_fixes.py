@@ -102,19 +102,26 @@ class TestMComponentEMA:
             f"distance_from_ema_pct={result.get('distance_from_ema_pct')}"
         )
 
-    def test_fallback_always_gives_high_score(self):
-        """Without historical data, fallback EMA = price * 0.98, always ~+2% -> strong_uptrend."""
+    def test_missing_history_degrades_to_neutral(self):
+        """Without historical data, M must degrade to neutral 50 — never bullish.
+
+        The old price*0.98 fallback manufactured a permanent +2% distance
+        (strong_uptrend, score >= 90) whenever data was missing, i.e. a data
+        outage produced the most bullish possible reading in the bear-market
+        protection component.
+        """
         sp500_quote = {"price": 5000.0}
         result = calculate_market_direction(
             sp500_quote=sp500_quote,
-            sp500_prices=None,  # No historical data -> fallback
+            sp500_prices=None,  # No historical data
             vix_quote={"price": 14.0},
         )
-        # Fallback: EMA = 5000 * 0.98 = 4900, distance = +2.04% -> strong_uptrend
-        assert result["score"] >= 90, (
-            f"Fallback (no historical data) should give high score, got {result['score']}"
+        assert result["score"] == 50, (
+            f"Missing history must yield neutral 50, got {result['score']}"
         )
-        assert result["trend"] == "strong_uptrend"
+        assert result["trend"] == "unknown"
+        assert result["warning"] is not None
+        assert result["error"] is not None
 
     def test_real_ema_differs_from_fallback(self):
         """With real declining prices, EMA should differ from the naive 0.98 fallback."""

@@ -50,7 +50,7 @@ class TestTriggered:
         assert out["state"] == "triggered"
         assert out["triggered_at"] == "2026-05-05T09:40:00-04:00"
         # entry = 148.50 - 0.05
-        assert out["entry_actual"] == 148.45
+        assert out["entry_actual"] == 148.95  # orl_low 149.00 - 0.05 offset (matches plan hint)
         # stop = session_high (149.85) + 0.25 * 2.0 = 149.85 + 0.5 = 150.35
         assert out["stop_actual"] == 150.35
 
